@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import os
-from utils import getRealPath
+from utils import getRealPath, getDataDir
 
 class MonoLogger:
     _logger_map = {}
@@ -140,4 +140,4 @@ class MonoLogger:
         self._critical_hdlr.close()
         MonoLogger._logger_map.pop(self.name)
 
-logger = MonoLogger(name="root",path="./logs",to_console=False, level="DEBUG")
+logger = MonoLogger(name="root", path=os.path.join(getDataDir(), "logs"), to_console=False, level="DEBUG")

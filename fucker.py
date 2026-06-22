@@ -31,12 +31,17 @@ import threading
 import ast
 import hashlib
 import string
-import tiktoken
+try:
+    import tiktoken
+    TIKTOKEN_AVAILABLE = True
+except ImportError:
+    TIKTOKEN_AVAILABLE = False
+    tiktoken = None
 
 """
 ⠄⠄⠄⢰⣧⣼⣯⠄⣸⣠⣶⣶⣦⣾⠄⠄⠄⠄⡀⠄⢀⣿⣿⠄⠄⠄⢸⡇⠄⠄
 ⠄⠄⠄⣾⣿⠿⠿⠶⠿⢿⣿⣿⣿⣿⣦⣤⣄⢀⡅⢠⣾⣛⡉⠄⠄⠄⠸⢀⣿⠄
-⠄⠄⢀⡋⣡⣴⣶⣶⡀⠄⠄⠙⢿⣿⣿⣿⣿⣿⣴⣿⣿⣿⢃⣤⣄⣀⣥⣿⣿⠄
+⠄⠄⢀⡋⣡⣴⣶⣶⡀⠄⠄⠙⢿⣿⣿⣿⣿⣿⣴⣿⣿⣿⢃⣤⣄⣀⣥⣿⣿⠄  
 ⠄⠄⢸⣇⠻⣿⣿⣿⣧⣀⢀⣠⡌⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠿⠿⣿⣿⣿⠄
 ⠄⢀⢸⣿⣷⣤⣤⣤⣬⣙⣛⢿⣿⣿⣿⣿⣿⣿⡿⣿⣿⡍⠄⠄⢀⣤⣄⠉⠋⣰
 ⠄⣼⣖⣿⣿⣿⣿⣿⣿⣿⣿⣿⢿⣿⣿⣿⣿⣿⢇⣿⣿⡷⠶⠶⢿⣿⣿⠇⢀⣤
@@ -68,7 +73,8 @@ class Fucker:
                  bark_token: str = '',
                  tree_view:bool = True,
                  progressbar_view:bool = True,
-                 image_path:str = ""):
+                 image_path:str = "",
+                 aiConfig: dict = None):
         """
         ### Fucker Class
         * `cookies`: dict, optional, cookies to use for the session
@@ -115,6 +121,7 @@ class Fucker:
         self.tree_view = tree_view
         self.progressbar_view = progressbar_view
         self.image_path = image_path
+        self.aiConfig = aiConfig or {}
 
     @property # cannot directly manipulate _cookies property, we need to parse uuid from cookies
     def cookies(self) -> RequestsCookieJar:
@@ -310,6 +317,16 @@ class Fucker:
                 self.fuckHikeCourse(i)
             except Exception as e:
                 logger.exception(e)
+                continue
+        # AI courses
+        ai_courses = self.getZhidaoAiList() or []
+        for c in ai_courses:
+            try:
+                print(f"Fucking AI course: {c.courseName} ({c.courseId})")
+                self.fuckAiCourse(int(c.courseId), c.classId, aiConfig=self.aiConfig)
+            except Exception as e:
+                logger.exception(e)
+                print(f"Error when fucking AI course {c.courseName}: {e}")
                 continue
 
     def fuckCourse(self, course_id:str):
@@ -1997,7 +2014,30 @@ class Openai:
         self.session = zhiDaosession if zhiDaosession is not None else requests.Session()
         self.useZhidao = useZhidao
 
-        self.encoder = tiktoken.encoding_for_model("gpt-4")
+        # 处理 tiktoken 不可用的情况
+        encoder_ok = False
+        if TIKTOKEN_AVAILABLE and tiktoken is not None:
+            try:
+                self.encoder = tiktoken.encoding_for_model("gpt-4")
+                encoder_ok = True
+            except Exception:
+                pass
+        if not encoder_ok:
+            # 创建一个简单的模拟编码器，当 tiktoken 不可用时使用
+            class SimpleEncoder:
+                def encode(self, text):
+                    # 简单估计：英文大约4个字符一个token，中文大约2个字符一个token
+                    # 这是一个粗略估计，仅用于避免错误
+                    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+                    english_chars = len(text) - chinese_chars
+                    # 估计 token 数
+                    estimated_tokens = chinese_chars // 2 + english_chars // 4
+                    return [0] * max(1, estimated_tokens)  # 返回一个非空列表
+                
+                def decode(self, tokens):
+                    return "".join(chr(t + 32) for t in tokens if t > 0)
+            
+            self.encoder = SimpleEncoder()
 
         self.prefix = "8ZflKEagfL"
 

@@ -1,5 +1,7 @@
 {
-    "version": "2.6.3",
+    "version": "2.7.0",
     "branch": "master",
-    "author": "VermiIIi0n"
+    "author": "VermiIIi0n",
+    "mod": "wrq18",
+    "mod_desc": "AI课程自动检测, tiktoken容错, Profile账户切换, PyInstaller打包支持"
 }

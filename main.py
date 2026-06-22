@@ -10,7 +10,7 @@ from fucker import Fucker
 from logger import logger
 from ObjDict import ObjDict
 from utils import showImage, cookie_jar_to_list
-from utils import getConfigPath, getRealPath, versionCmp
+from utils import getConfigPath, getRealPath, getDataDir, setProfile, versionCmp
 
 DEFAULT_CONFIG = {
     "username": "",
@@ -54,31 +54,33 @@ DEFAULT_CONFIG = {
         "use_stream": True
     }
 }
-# get config or create one if not exist
-if os.path.isfile(getConfigPath()):
-    with open(getConfigPath(), 'r+', encoding="UTF-8") as f:
-        # 不指定编码格式会导致config中可能存在的中文字符乱码
-        config = ObjDict(json.load(f), default=None)
-        if "config_version" not in config:
-            config.config_version = "1.0.0"
-        if versionCmp(config.config_version, DEFAULT_CONFIG["config_version"]) < 0:
-            new = ObjDict(DEFAULT_CONFIG, default=None)
-            if versionCmp(config.config_version, "1.0.1") < 0:
-                config.pop("qr_extra", None)
-            if versionCmp(config.config_version, "1.3.0") < 0:
-                pushplus = config.pop("push", {})
-                new.pushplus.update(pushplus)
-            config.pop("config_version", None)
-            new.update(config)
-            config = new
-            f.seek(0)
+# Config will be loaded after arg parsing & profile setup
+def _loadConfig():
+    if os.path.isfile(getConfigPath()):
+        with open(getConfigPath(), 'r+', encoding="UTF-8") as f:
+            config = ObjDict(json.load(f), default=None)
+            if "config_version" not in config:
+                config.config_version = "1.0.0"
+            if versionCmp(config.config_version, DEFAULT_CONFIG["config_version"]) < 0:
+                new = ObjDict(DEFAULT_CONFIG, default=None)
+                if versionCmp(config.config_version, "1.0.1") < 0:
+                    config.pop("qr_extra", None)
+                if versionCmp(config.config_version, "1.3.0") < 0:
+                    pushplus = config.pop("push", {})
+                    new.pushplus.update(pushplus)
+                config.pop("config_version", None)
+                new.update(config)
+                config = new
+                f.seek(0)
+                json.dump(config, f, indent=4)
+                f.truncate()
+                print("****Config file updated****")
+        return config
+    else:
+        config = ObjDict(DEFAULT_CONFIG, default=None)
+        with open(getConfigPath(), 'w') as f:
             json.dump(config, f, indent=4)
-            f.truncate()
-            print("****Config file updated****")
-else:
-    config = ObjDict(DEFAULT_CONFIG, default=None)
-    with open(getConfigPath(), 'w') as f:
-        json.dump(config, f, indent=4)
+        return config
 
 # parse arguments
 parser = argparse.ArgumentParser(prog="ZHS Fucker")
@@ -117,8 +119,17 @@ parser.add_argument("-ai", "--aicourse", type=str, nargs=2,
 
 parser.add_argument("--noexam", type=bool,
                     help="Disable AI exam")
+parser.add_argument("-P", "--profile", type=str, default=None,
+                    help="Profile name for saving login data (cookies, config, etc.)")
 
 args = parser.parse_args()
+
+# Setup profile before anything else
+if args.profile:
+    setProfile(args.profile)
+
+# Now load config from the right directory
+config = _loadConfig()
 
 course = args.course
 username = args.username or config.username
@@ -178,9 +189,9 @@ with open(getRealPath("meta.json"), "r") as f:
 
 # create an instance, now we are talking... or fucking
 fucker = Fucker(proxies=proxies, speed=args.speed, end_thre=args.threshold, limit=args.limit,
-                pushplus_token=pushplus_token, bark_token=bark_token, tree_view=tree_view, progressbar_view=progressbar_view, image_path=image_path)
+                pushplus_token=pushplus_token, bark_token=bark_token, tree_view=tree_view, progressbar_view=progressbar_view, image_path=image_path, aiConfig=config.ai)
 
-cookies_path = getRealPath("./cookies.json")
+cookies_path = os.path.join(getDataDir(), "cookies.json")
 cookies_loaded = False
 if save_cookies and os.path.exists(cookies_path):
     with open(cookies_path, 'r') as f:
@@ -281,7 +292,7 @@ if args.aicourse:
         exit(0)
 
 
-exec_list = getRealPath("execution.json")
+exec_list = os.path.join(getDataDir(), "execution.json")
 # fetch course list
 if args.fetch:
     with open(exec_list, "w") as f:
@@ -289,7 +300,9 @@ if args.fetch:
                       for c in fucker.getZhidaoList()]
         hike_ids = [{"name": c.courseName, "id": str(
             c.courseId)} for c in fucker.getHikeList()]
-        json.dump(zhidao_ids + hike_ids, f, indent=4, ensure_ascii=False)
+        ai_ids = [{"name": f"[AI] {c.courseName}", "id": str(c.courseId), "classId": c.classId, "type": "ai"}
+                   for c in (fucker.getZhidaoAiList() or [])]
+        json.dump(zhidao_ids + hike_ids + ai_ids, f, indent=4, ensure_ascii=False)
     exit(0)
 
 # get courses from file if not specified

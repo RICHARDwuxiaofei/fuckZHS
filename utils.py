@@ -63,11 +63,31 @@ def terminalShowImage_tty(img):
     qr_str += white * 49 + new_line
     print(qr_str)
 
+_profile = None
+
+def setProfile(name):
+    global _profile
+    _profile = name
+
+def getProfile():
+    return _profile
+
 def getDir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.realpath(__file__))
 
+def getDataDir():
+    """返回数据目录，有profile时返回 profiles/<name>/，否则返回程序根目录"""
+    base = getDir()
+    if _profile:
+        d = os.path.join(base, 'profiles', _profile)
+        os.makedirs(d, exist_ok=True)
+        return d
+    return base
+
 def getConfigPath():
-    return os.path.join(getDir(), 'config.json')
+    return os.path.join(getDataDir(), 'config.json')
 
 def getRealPath(path: str):
     path = os.path.expanduser(path)
