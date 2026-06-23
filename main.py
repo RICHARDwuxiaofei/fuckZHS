@@ -180,7 +180,10 @@ if args.proxy:  # parse proxy
             exit(1)
 
 # check update
-with open(getRealPath("meta.json"), "r") as f:
+meta_path = getRealPath("meta.json")
+if not os.path.isfile(meta_path):  # PyInstaller 6.x puts datas in _internal/
+    meta_path = os.path.join(getDir(), "_internal", "meta.json")
+with open(meta_path, "r") as f:
     try:  # some exceptions won't be caught by 'with'
         m = ObjDict(json.load(f))
         url = f"https://raw.githubusercontent.com/{m.author}/fuckZHS/{m.branch}/meta.json"
