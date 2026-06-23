@@ -10,7 +10,7 @@ from fucker import Fucker
 from logger import logger
 from ObjDict import ObjDict
 from utils import showImage, cookie_jar_to_list
-from utils import getConfigPath, getRealPath, getDataDir, setProfile, versionCmp
+from utils import getConfigPath, getRealPath, getDataDir, getDir, setProfile, versionCmp
 
 DEFAULT_CONFIG = {
     "username": "",
@@ -39,9 +39,9 @@ DEFAULT_CONFIG = {
         "enabled": True,
         "use_zhidao_ai": True,
         "openai": {
-            "api_base": "https://api.openai.com",
-            "api_key": "sk-",
-            "model_name": "claude-3-5-sonnet-20240620"
+            "api_base": "https://api.deepseek.com",
+            "api_key": "sk-your-deepseek-key",
+            "model_name": "deepseek-chat"
         },
         "ppt_processing": {
             "provide_to_ai": False,
@@ -130,6 +130,14 @@ if args.profile:
 
 # Now load config from the right directory
 config = _loadConfig()
+
+# Override API key from 'key' file if exists (easier to delete before sharing)
+key_file = os.path.join(getDir(), "key")
+if os.path.isfile(key_file):
+    with open(key_file, 'r') as f:
+        api_key = f.read().strip()
+        if api_key:
+            config.ai.openai.api_key = api_key
 
 course = args.course
 username = args.username or config.username

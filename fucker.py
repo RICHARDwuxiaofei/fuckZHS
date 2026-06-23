@@ -1453,7 +1453,8 @@ class Fucker:
 
                 # 开始测试部分
                 tried_count = 0
-                while True:
+                max_tries = 5
+                while tried_count < max_tries:
                     if no_exam:
                         break
 
@@ -1526,6 +1527,11 @@ class Fucker:
                     tprint(prefix*3)
                     tprint(
                         f"{prefix*3}__Finished exam for knowledge point {knowledge.knowledgeName}")
+
+                if tried_count >= max_tries:
+                    tprint(prefix*3)
+                    tprint(
+                        f"{prefix*3}__Max exam attempts ({max_tries}) reached, moving on")
 
             tprint(prefix*2)  # extra line as separator
             tprint(f"{prefix*2}__Fucked theme {theme.themeName}")
@@ -1856,7 +1862,7 @@ class ExamCtx:
         # 选项数量少于2个，答案就是选项内容
         if len(choices) < 2:
             answer = choices[0]["id"]
-            return [answer]
+            return [answer], "cached"
 
         try:
             # 选项数量大于2个，使用AI生成答案
