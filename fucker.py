@@ -23,7 +23,9 @@ import time
 import json
 import re
 import os
+import platform
 import atexit
+from contextlib import suppress
 from urllib.parse import urlparse
 from urllib.parse import urlencode, parse_qsl, urlsplit, urlunsplit
 from pathlib import Path
@@ -61,6 +63,9 @@ class TimeLimitExceeded(TimeoutError):
     pass
 
 class CaptchaException(Exception):
+    pass
+
+class CourseNotStartedException(Exception):
     pass
 
 class Fucker:
@@ -149,6 +154,8 @@ class Fucker:
                 self._cookies[f"exitRecod_{self.uuid}"] = "2"
             except KeyError:
                 raise ValueError("Cookies invalid")
+            with suppress(Exception):
+                self.session.cookies.update(self._cookies)
         logger.debug(f"set cookies: {self._cookies}")
 
     def login(self, username: str=None, password: str=None, interactive: bool=True, use_qr:bool=False, qr_callback: callable=None):
@@ -312,23 +319,30 @@ class Fucker:
     def fuckWhatever(self):
         """Fuck whatever is found"""
         try:
-            zhidao_ids = [c.secret for c in (self.getZhidaoList() or [])]
-            for i in zhidao_ids:
+            zhidao_courses = self.getZhidaoList() or []
+            for c in zhidao_courses:
                 try:
-                    self.fuckZhidaoCourse(i)
+                    self.fuckZhidaoCourse(c.secret)
+                except CourseNotStartedException:
+                    print(f"提示: 课程《{c.courseName}》尚未到开课时间，已跳过")
                 except Exception as e:
-                    logger.exception(e)
+                    if "课程还未开始" in str(e):
+                        print(f"提示: 课程《{c.courseName}》尚未到开课时间，已跳过")
+                    else:
+                        logger.exception(e)
+                        print(f"处理课程《{c.courseName}》异常: {e}")
                     continue
         except Exception as e:
             logger.exception(e)
 
         try:
-            hike_ids = [c.courseId for c in (self.getHikeList() or [])]
-            for i in hike_ids:
+            hike_courses = self.getHikeList() or []
+            for c in hike_courses:
                 try:
-                    self.fuckHikeCourse(i)
+                    self.fuckHikeCourse(c.courseId)
                 except Exception as e:
                     logger.exception(e)
+                    print(f"处理课程《{c.courseName}》异常: {e}")
                     continue
         except Exception as e:
             logger.exception(e)
@@ -709,6 +723,9 @@ class Fucker:
                 case -12:
                     msg = ret.message or "captcha required"
                     e = CaptchaException(f"Captcha required: {msg}")
+                case -3:
+                    msg = ret.message or "课程还未开始"
+                    e = CourseNotStartedException(f"课程还未开始: {msg}")
                 case _:
                     e = Exception(f"code: {ret.code} " +
                                   f"msg: {ret.message or json.dumps(ret,indent=4,ensure_ascii=False)}")
@@ -1195,12 +1212,15 @@ class Fucker:
                 "status": 2, "page": page, "size": size}
         r = self.polymasQuery(url, data).data
         r.default = None
-        self.courses.polymas = r.list or []
+        all_courses = r.list or []
         total = int(r.total or 0)
         for page in range(2, int(math.ceil(total/size))+1):
             data["page"] = page
             r = self.polymasQuery(url, data).data
-            self.courses.polymas += r.list or []
+            all_courses += r.list or []
+        self.courses._polymas_all = all_courses
+        # 仅将真正的 Polymas AI 智课 (hikeAiCourse) 放入自动处理列表
+        self.courses.polymas = [c for c in all_courses if getattr(c, 'courseType', None) == 'hikeAiCourse']
         return self.courses.polymas
 
     def getPolymasContext(self, course_id: str, term: int = None, force: bool = False):
@@ -1217,36 +1237,58 @@ class Fucker:
 
         # figure out term and classId
         course = None
-        for c in self.getPolymasList():
+        all_list = getattr(self.courses, '_polymas_all', None) or self.getPolymasList()
+        for c in all_list:
             if str(c.courseId) == str(course_id):
                 course = c
                 break
+        if not course:
+            for c in self.getPolymasList():
+                if str(c.courseId) == str(course_id):
+                    course = c
+                    break
         if term is None:
             term = course and (course.terms or [None])[0]
         if term is None:
-            raise ValueError(f"term of course {course_id} not found")
+            logger.warning(f"term of course {course_id} not found")
+            return None
         term = int(term)
         class_id = None
         if course and course.studentClasses:
             class_id = course.studentClasses[0].classId
         if not class_id:
-            classes = self.polymasQuery(
-                f"{self.POLYMAS_API}/student-course/student/classList",
-                {"courseId": course_id, "term": term}).data
-            class_id = classes and classes[0].classId
+            try:
+                classes = self.polymasQuery(
+                    f"{self.POLYMAS_API}/student-course/student/classList",
+                    {"courseId": course_id, "term": term}).data
+                class_id = classes and classes[0].classId
+            except Exception as e:
+                logger.warning(f"Query classList failed for {course_id}: {e}")
         if not class_id:
-            raise ValueError(f"classId of course {course_id} not found")
+            logger.warning(f"classId of course {course_id} not found (可能非智能体智课或未分班)")
+            return None
 
         # get study library id
-        library_id = self.polymasQuery(
-            f"{self.POLYMAS_API}/teacher-course/library/course/findStudyLibraryByCourseId",
-            {"courseId": course_id, "term": term}, method="GET").data
+        try:
+            library_id = self.polymasQuery(
+                f"{self.POLYMAS_API}/teacher-course/library/course/findStudyLibraryByCourseId",
+                {"courseId": course_id, "term": term}, method="GET").data
+        except Exception as e:
+            logger.warning(f"findStudyLibraryByCourseId failed for {course_id}: {e}")
+            return None
+        if not library_id:
+            logger.warning(f"libraryId of course {course_id} not found")
+            return None
 
         # get resource tree, collect video files
-        tree = self.polymasQuery(
-            f"{self.POLYMAS_API}/student-course/study/student/resource/queryTree",
-            {"libraryFolderId": library_id, "classId": class_id,
-             "courseId": course_id, "term": term}).data
+        try:
+            tree = self.polymasQuery(
+                f"{self.POLYMAS_API}/student-course/study/student/resource/queryTree",
+                {"libraryFolderId": library_id, "classId": class_id,
+                 "courseId": course_id, "term": term}).data
+        except Exception as e:
+            logger.warning(f"queryTree failed for {course_id}: {e}")
+            return None
         videos = ObjDict()
 
         def walk(node, chapter=""):
@@ -1308,7 +1350,7 @@ class Fucker:
             "studyTotalTime": int(end_time - start_time),
             "courseId": ctx.courseId,
             "resourceId": resource_id,
-            "clientType": "Windows",
+            "clientType": "Windows" if platform.system() == "Windows" else "Linux",
             "term": ctx.term,
         }
         rt = self.polymasQuery(url, data).data
@@ -1323,6 +1365,9 @@ class Fucker:
         tprint = print if self.tree_view else lambda *a, **k: None
         logger.info(f"Fucking Polymas course {course_id}")
         ctx = self.getPolymasContext(course_id, term)
+        if not ctx:
+            print(f"提示: Polymas 课程 {course_id} 无有效班级或资源树，已跳过")
+            return
         name = ctx.course and ctx.course.courseName or course_id
         tprint(f"Fucking Polymas course: {name}")
         begin_time = time.time()
@@ -1472,7 +1517,19 @@ class Fucker:
                 e = ValueError(f"Unsupport method: {method}")
                 logger.error(e)
                 raise e
-        ret = ObjDict(r.json())
+        try:
+            ret = ObjDict(r.json())
+        except Exception:
+            if "passport.zhihuishu.com/login?service=" in r.text or "<script>" in r.text:
+                cas_url = f"https://passport.zhihuishu.com/login?service={url}"
+                self.session.get(cas_url, allow_redirects=True, proxies=self.proxies, timeout=10)
+                if method == "POST":
+                    r = self.session.post(url, data=data, proxies=self.proxies, timeout=10)
+                else:
+                    r = self.session.get(url, params=data, proxies=self.proxies, timeout=10)
+                ret = ObjDict(r.json())
+            else:
+                raise
         logger.debug(json.dumps(ret, indent=4, ensure_ascii=False))
         return ret
 

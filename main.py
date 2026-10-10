@@ -6,7 +6,7 @@ import requests
 import platform
 from functools import partial
 from contextlib import suppress
-from fucker import Fucker
+from fucker import Fucker, CourseNotStartedException
 from logger import logger
 from ObjDict import ObjDict
 from utils import showImage, cookie_jar_to_list
@@ -371,9 +371,14 @@ if course_items:
             else:
                 fucker.fuckCourse(course_id=c_id)
             course_items.remove(item)
+        except CourseNotStartedException as e:
+            print(f"提示: 课程 {c_id} 尚未到开课时间，已跳过 ({e})")
         except Exception as e:
-            logger.exception(e)
-            print(f"Error when fucking course {c_id}:\n{e}")
+            if "课程还未开始" in str(e):
+                print(f"提示: 课程 {c_id} 尚未到开课时间，已跳过")
+            else:
+                logger.exception(e)
+                print(f"Error when fucking course {c_id}:\n{e}")
 
 # execute courses specified via command line arguments
 elif course:
@@ -390,9 +395,14 @@ elif course:
             try:
                 fucker.fuckCourse(course_id=c)
                 course.remove(c)
+            except CourseNotStartedException as e:
+                print(f"提示: 课程 {c} 尚未到开课时间，已跳过 ({e})")
             except Exception as e:
-                logger.exception(e)
-                print(f"Error when fucking course {c}:\n{e}")
+                if "课程还未开始" in str(e):
+                    print(f"提示: 课程 {c} 尚未到开课时间，已跳过")
+                else:
+                    logger.exception(e)
+                    print(f"Error when fucking course {c}:\n{e}")
     if args.videos:
         print(f"*the following videos are not fucked: {args.videos}")
 
