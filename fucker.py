@@ -1,5 +1,5 @@
 from zd_utils import Cipher, getEv, WatchPoint, HOME_KEY, VIDEO_KEY, QA_KEY, AI_KEY, EXAM_KEY
-from utils import progressBar, HMS, wipeLine, list_to_cookie_jar, getRealPath
+from utils import progressBar, HMS, wipeLine, list_to_cookie_jar, getRealPath, getDataDir
 from urllib.parse import unquote_plus as unquote
 from requests.adapters import HTTPAdapter, Retry
 from requests.cookies import RequestsCookieJar
@@ -23,6 +23,7 @@ import time
 import json
 import re
 import os
+import atexit
 from urllib.parse import urlparse
 from urllib.parse import urlencode, parse_qsl, urlsplit, urlunsplit
 from pathlib import Path
@@ -110,7 +111,13 @@ class Fucker:
         logger.debug(f'proxies: {self.proxies}')
         logger.debug(f'headers: {self.headers}')
 
-        self.limit = abs(limit)                    # time limit for fucking, in minutes
+        self.limit = abs(limit)                    # daily time limit for fucking, in minutes, shared across courses
+        self._daily_file = os.path.join(getDataDir(), "daily_limit.json")
+        self._daily_time = self._loadDailyTime()   # seconds already fucked today, persisted across runs
+        atexit.register(self._saveDailyTime)
+        self.captcha_hit = False                   # set True when the server demands a captcha
+        self.break_every = 45 * 60                 # take a long break every N seconds of watching
+        self.active_time = 0                       # real seconds watched since last long break
         self.speed = speed and max(speed, 0.1)     # video play speed, Falsy values for default
         self.end_thre = max(end_thre or 0, 0.0) or 0.91 # video play end threshold, above this will be considered as finished
         self.prefix = "  |"                        # prefix for tree view
@@ -304,37 +311,64 @@ class Fucker:
 
     def fuckWhatever(self):
         """Fuck whatever is found"""
-        zhidao_ids = [c.secret for c in self.getZhidaoList()]
-        for i in zhidao_ids:
-            try:
-                self.fuckZhidaoCourse(i)
-            except Exception as e:
-                logger.exception(e)
-                continue
-        hike_ids = [c.courseId for c in self.getHikeList()]
-        for i in hike_ids:
-            try:
-                self.fuckHikeCourse(i)
-            except Exception as e:
-                logger.exception(e)
-                continue
-        # AI courses
-        ai_courses = self.getZhidaoAiList() or []
-        for c in ai_courses:
-            try:
-                print(f"Fucking AI course: {c.courseName} ({c.courseId})")
-                self.fuckAiCourse(int(c.courseId), c.classId, aiConfig=self.aiConfig)
-            except Exception as e:
-                logger.exception(e)
-                print(f"Error when fucking AI course {c.courseName}: {e}")
-                continue
+        try:
+            zhidao_ids = [c.secret for c in (self.getZhidaoList() or [])]
+            for i in zhidao_ids:
+                try:
+                    self.fuckZhidaoCourse(i)
+                except Exception as e:
+                    logger.exception(e)
+                    continue
+        except Exception as e:
+            logger.exception(e)
+
+        try:
+            hike_ids = [c.courseId for c in (self.getHikeList() or [])]
+            for i in hike_ids:
+                try:
+                    self.fuckHikeCourse(i)
+                except Exception as e:
+                    logger.exception(e)
+                    continue
+        except Exception as e:
+            logger.exception(e)
+
+        # AI courses (Zhidao)
+        try:
+            ai_courses = self.getZhidaoAiList() or []
+            for c in ai_courses:
+                try:
+                    print(f"Fucking AI course: {c.courseName} ({c.courseId})")
+                    self.fuckAiCourse(int(c.courseId), c.classId, aiConfig=self.aiConfig)
+                except Exception as e:
+                    logger.exception(e)
+                    print(f"Error when fucking AI course {c.courseName}: {e}")
+                    continue
+        except Exception as e:
+            logger.exception(e)
+
+        # Polymas AI courses (2026 hikeAiCourse)
+        try:
+            polymas_courses = self.getPolymasList() or []
+            for c in polymas_courses:
+                try:
+                    print(f"Fucking Polymas AI course: {c.courseName} ({c.courseId})")
+                    self.fuckPolymasCourse(str(c.courseId))
+                except Exception as e:
+                    logger.exception(e)
+                    print(f"Error when fucking Polymas AI course {c.courseName}: {e}")
+                    continue
+        except Exception as e:
+            logger.exception(e)
 
     def fuckCourse(self, course_id:str):
         """
         ### Fuck the whole course
-        * `course_id`: `courseId`(Hike) or `recuitAndCourseId`(Zhidao)
+        * `course_id`: `courseId`(Hike) or `recuitAndCourseId`(Zhidao), or `polymas:courseId`(Polymas AI course)
         """
-        if re.match(r".*[a-zA-Z].*", course_id): # determine if it's a courseId or a recruitAndCourseId
+        if course_id.startswith("polymas:"):
+            self.fuckPolymasCourse(course_id.split(":", 1)[1])
+        elif re.match(r".*[a-zA-Z].*", course_id): # determine if it's a courseId or a recruitAndCourseId
             self.fuckZhidaoCourse(course_id) # it's a recruitAndCourseId
         else: # it's a courseId
             self.fuckHikeCourse(course_id)
@@ -342,10 +376,12 @@ class Fucker:
     def fuckVideo(self, course_id, video_id:str):
         """
         ### Fuck a single video
-        * `course_id`: `courseId`(Hike) or `recuitAndCourseId`(Zhidao)
-        * `video_id`: `fileId`(Hike) or `videoId`(Zhidao, not visible in URL)
+        * `course_id`: `courseId`(Hike) or `recuitAndCourseId`(Zhidao), or `polymas:courseId`(Polymas AI course)
+        * `video_id`: `fileId`(Hike) or `videoId`(Zhidao, not visible in URL) or `resourceId`(Polymas, nodeId in resource tree)
         """
-        if re.match(r".*[a-zA-Z].*", course_id):
+        if course_id.startswith("polymas:"):
+            self.fuckPolymasVideo(course_id.split(":", 1)[1], video_id)
+        elif re.match(r".*[a-zA-Z].*", course_id):
             self.fuckZhidaoVideo(course_id, video_id)
         else:
             self.fuckHikeVideo(course_id, video_id)
@@ -484,13 +520,27 @@ class Fucker:
                             tprint(prefix)
                             tprint(f"{prefix}##Fucking time limit exceeded: {e}\n")
                             return
-                        except CaptchaException:
-                            logger.info("Captcha required")
+                        except CaptchaException as e:
+                            self.captcha_hit = True
+                            logger.info(f"Captcha required: {e}")
                             self._pushplus("fuckZHS","需要提供验证码")
                             self._bark("fuckZHS","需要提供验证码")
-                            tprint(prefix)
-                            tprint(f"{prefix}##Captcha required\a\n")
-                            return
+                            tprint(f"{prefix*3}##Captcha: 需要滑块验证，请在知到APP/网页手动验证后等待重试...")
+                            # retry with backoff
+                            for retry in range(3):
+                                wait = 30 + retry * 30 + int(random() * 20)
+                                tprint(f"{prefix*3}##等待 {wait}s 后重试 ({retry+1}/3)...")
+                                time.sleep(wait)
+                                try:
+                                    self.fuckZhidaoVideo(RAC_id, video.videoId)
+                                    tprint(f"{prefix*3}##重试成功")
+                                    self.captcha_hit = False
+                                    break
+                                except CaptchaException:
+                                    continue
+                            else:
+                                tprint(f"{prefix}##Captcha重试失败，请手动在知到APP/网页完成滑块验证\a\n")
+                                return
                         except Exception as e:
                             logger.exception(e)
                             self._pushplus("fuckZHS",e)
@@ -546,7 +596,7 @@ class Fucker:
         speed = self.speed or 1.5  # default speed for Zhidao is 1.5
         last_submit = played_time  # last pause time
         elapsed_time = 0    # real world time elapsed
-        db_interval = 30    # database report interval
+        db_interval = 30 + randint(-5, 5)    # randomize report interval to avoid detection
         cache_interval = 18 # cache report interval
         answer = None       # answer flag, do not modify
         report = False      # report flag, do not modify
@@ -558,8 +608,17 @@ class Fucker:
             time.sleep(1)
             ctx.fucked_time += 1 # for time limit check
             elapsed_time += 1
-            played_time = min(played_time+speed, end_time) # update video time and make sure not exceeding end_time
-            pause = pause or int(random() < 0.0025)*60 # randomly pause a minute, may avoid detection
+            self.active_time += 1
+            if self.active_time >= self.break_every: # long break, look more like a human
+                self.active_time = 0
+                rest = randint(3, 10) * 60
+                logger.info(f"Taking a break for {rest//60} minutes")
+                print(f"\n*resting for {rest//60} minutes to avoid the captcha...\n")
+                time.sleep(rest)
+            # add small random speed variation to appear more human
+            speed_jitter = uniform(-0.15, 0.15)
+            played_time = min(played_time+speed+speed_jitter, end_time) # update video time and make sure not exceeding end_time
+            pause = pause or int(random() < 0.008)*60 # randomly pause a minute, may avoid detection
             report = report or pause == 60  # report on pause
 
             ### events
@@ -594,10 +653,13 @@ class Fucker:
             if elapsed_time % db_interval == 0 or played_time >= end_time or report:
                 report = False # unset report flag
                 wp.add(played_time)
+                # add jitter before reporting to avoid detection
+                time.sleep(uniform(0.3, 1.5))
                 # now submit to database
                 self.saveDatabaseIntervalTimeV2(RAC_id,video_id,played_time,last_submit,wp.get(),token_id)
                 last_submit = played_time # update last pause time
                 wp.reset(played_time)     # reset watch point
+                db_interval = 30 + randint(-5, 5) # re-randomize interval
             ## report to cache
             if False and elapsed_time % cache_interval == 0:
                 wp.add(played_time)
@@ -645,7 +707,8 @@ class Fucker:
             ret.default = None
             match ret.code:
                 case -12:
-                    e = CaptchaException("captcha required")
+                    msg = ret.message or "captcha required"
+                    e = CaptchaException(f"Captcha required: {msg}")
                 case _:
                     e = Exception(f"code: {ret.code} " +
                                   f"msg: {ret.message or json.dumps(ret,indent=4,ensure_ascii=False)}")
@@ -941,19 +1004,30 @@ class Fucker:
         total_time = int(file_info.totalTime)
         start_date = int(time.time()*1000)
         speed = self.speed or 1.25 # default speed for Hike is 1.25
-        interval = 30              # interval between 2 progess reports
+        interval = 30 + randint(-5, 5) # randomize interval to avoid detection
         end_time = max(total_time*self.end_thre, 1.0)
         played_time = prev_time    # total video played time
         # start main loop
         while played_time <= end_time:
             time.sleep(1)
             ctx.fucked_time += 1
-            played_time = min(played_time+speed, end_time)
+            self.active_time += 1
+            if self.active_time >= self.break_every:
+                self.active_time = 0
+                rest = randint(3, 10) * 60
+                logger.info(f"Taking a break for {rest//60} minutes")
+                print(f"\n*resting for {rest//60} minutes to avoid the captcha...\n")
+                time.sleep(rest)
+            # add small random speed variation
+            speed_jitter = uniform(-0.12, 0.12)
+            played_time = min(played_time+speed+speed_jitter, end_time)
             # enter branch when video is finished or interval is reached
             if played_time >= end_time or \
                 not (int(played_time-prev_time) % interval):
+                time.sleep(uniform(0.3, 1.5)) # jitter before report
                 ret_time = self.saveStuStudyRecord(course_id,file_id,played_time,prev_time,start_date) # report progress
                 prev_time, played_time = ret_time, ret_time
+                interval = 30 + randint(-5, 5) # re-randomize interval
             progressBar(played_time, end_time, prefix=f"fucking {file_id}", suffix="done", progressbar_view=self.progressbar_view)
         logger.info(f"Fucked video {file_id} of course {course_id}, cost {time.time()-begin_time:.2f}s")
         time.sleep(random()+1) # more human-like
@@ -1058,6 +1132,295 @@ class Fucker:
 
 # end of hike methods
 #######################################
+# following are methods for cloudapi.polymas.com API (hikeAiCourse, a.k.a. AI智课)
+    POLYMAS_API = "https://cloudapi.polymas.com"
+    POLYMAS_ORIGIN = "https://hike-teaching-center.polymas.com"
+
+    def _polymasToken(self):
+        """the zhihuishu jt-cas JWT is accepted as Authorization by cloudapi.polymas.com"""
+        token = self.cookies.get("jt-cas") or self.cookies.get("ai-poly")
+        if not token:
+            raise ValueError("Cookies invalid: missing jt-cas")
+        return token
+
+    def polymasQuery(self, url: str, data: dict = None, method: str = "POST", ok_code: int = 200):
+        """set ok_code to None for no check"""
+        self._checkCookies()
+        self.session.cookies = self.cookies.copy()
+        self.session.headers = self.headers.copy()
+        self.session.headers.update({
+            "Accept": "application/json, text/plain, */*",
+            "Authorization": self._polymasToken(),
+            "Origin": self.POLYMAS_ORIGIN,
+            "Referer": f"{self.POLYMAS_ORIGIN}/",
+        })
+        self.session.proxies = self.proxies.copy()
+        if method == "POST":
+            r = self.session.post(url, json=data or {}, proxies=self.proxies, timeout=10)
+        else:
+            r = self.session.get(url, params=data, proxies=self.proxies, timeout=10)
+        ret = ObjDict(r.json())
+        logger.debug(f"{method} {url}\ndata: {json.dumps(data, ensure_ascii=False)}\n" +
+                     f"response: {json.dumps(ret, ensure_ascii=False)[:2000]}")
+        if ok_code is not None and ret.code != ok_code:
+            ret.default = None
+            e = Exception(f"code: {ret.code} " +
+                          f"msg: {ret.msg or json.dumps(ret, indent=4, ensure_ascii=False)}")
+            logger.error(e)
+            raise e
+        return ret
+
+    def _polymasSchoolNid(self):
+        if self.context.get("_polymas_school_nid"):
+            return self.context["_polymas_school_nid"]
+        url = f"{self.POLYMAS_API}/user/user/v2/get-current-user-detail"
+        r = self.polymasQuery(url, {}).data
+        r.default = None
+        nid = (r.schoolInfo or ObjDict(default=None)).nid or r.schoolCertificationNid
+        if not nid:
+            raise ValueError("Failed to get polymas school nid")
+        self.context["_polymas_school_nid"] = nid
+        return nid
+
+    def getPolymasList(self):
+        """
+        ### Get all AI courses (hikeAiCourse) from polymas
+        """
+        if self.courses.polymas:
+            return self.courses.polymas
+        url = f"{self.POLYMAS_API}/student-course/student/index/queryStudentCourse"
+        school_nid = self._polymasSchoolNid()
+        page, size = 1, 16
+        data = {"keyword": "", "term": "", "schoolId": school_nid,
+                "status": 2, "page": page, "size": size}
+        r = self.polymasQuery(url, data).data
+        r.default = None
+        self.courses.polymas = r.list or []
+        total = int(r.total or 0)
+        for page in range(2, int(math.ceil(total/size))+1):
+            data["page"] = page
+            r = self.polymasQuery(url, data).data
+            self.courses.polymas += r.list or []
+        return self.courses.polymas
+
+    def getPolymasContext(self, course_id: str, term: int = None, force: bool = False):
+        """
+        ### fetch context for a polymas AI course
+        * `course_id`: polymas `courseId`
+        * `term`: term id, auto detected from course list when omitted
+        """
+        ctx_key = f"polymas:{course_id}"
+        if ctx_key in self.context and not force:
+            return self.context[ctx_key]
+        self._checkCookies()
+        logger.info(f"Getting context for polymas course {course_id}")
+
+        # figure out term and classId
+        course = None
+        for c in self.getPolymasList():
+            if str(c.courseId) == str(course_id):
+                course = c
+                break
+        if term is None:
+            term = course and (course.terms or [None])[0]
+        if term is None:
+            raise ValueError(f"term of course {course_id} not found")
+        term = int(term)
+        class_id = None
+        if course and course.studentClasses:
+            class_id = course.studentClasses[0].classId
+        if not class_id:
+            classes = self.polymasQuery(
+                f"{self.POLYMAS_API}/student-course/student/classList",
+                {"courseId": course_id, "term": term}).data
+            class_id = classes and classes[0].classId
+        if not class_id:
+            raise ValueError(f"classId of course {course_id} not found")
+
+        # get study library id
+        library_id = self.polymasQuery(
+            f"{self.POLYMAS_API}/teacher-course/library/course/findStudyLibraryByCourseId",
+            {"courseId": course_id, "term": term}, method="GET").data
+
+        # get resource tree, collect video files
+        tree = self.polymasQuery(
+            f"{self.POLYMAS_API}/student-course/study/student/resource/queryTree",
+            {"libraryFolderId": library_id, "classId": class_id,
+             "courseId": course_id, "term": term}).data
+        videos = ObjDict()
+
+        def walk(node, chapter=""):
+            node.default = None
+            detail = node.detail or ObjDict(default=None)
+            if detail.classify == "folder":
+                chapter = detail.title or chapter
+            if detail.classify == "file":
+                ext = ObjDict(json.loads(detail.ext or "{}"), default=None)
+                duration = float(ext.duration or 0)
+                # 跳过非视频或时长为0的文件（如PPT、PDF等）
+                if duration > 0:
+                    videos[node.nodeId] = ObjDict({
+                        "resourceId": node.nodeId,
+                        "name": detail.title,
+                        "chapter": chapter,
+                        "ossUrl": ext.ossUrl,
+                        "duration": duration,
+                        "isFinished": bool(node.isFinished),
+                        "isRequire": bool(node.isRequire),
+                        "completePercentage": float(node.completePercentage or 0),
+                    }, default=None)
+            for child in node.children or []:
+                walk(ObjDict(child, default=None), chapter)
+
+        for node in tree or []:
+            walk(node)
+        logger.info(f"{len(videos)} video resources in polymas course {course_id}")
+
+        ctx = ObjDict({
+            "courseId": course_id,
+            "course": course,
+            "term": term,
+            "classId": class_id,
+            "libraryFolderId": library_id,
+            "videos": videos,
+            "fucked_time": 0
+        }, default={})
+        self.context[ctx_key] = ctx
+        return ctx
+
+    def getPolymasResourceDetail(self, ctx, resource_id: str):
+        url = f"{self.POLYMAS_API}/student-course/study/student/resource/detail"
+        return self.polymasQuery(url, {
+            "courseId": ctx.courseId,
+            "libraryFolderId": ctx.libraryFolderId,
+            "resourceId": resource_id,
+            "term": ctx.term,
+        }).data
+
+    def savePolymasStudyRecord(self, ctx, resource_id: str, start_time: float, end_time: float, start_date: str):
+        """### report video progress for polymas AI course"""
+        url = f"{self.POLYMAS_API}/student-course/study/student/record/report"
+        data = {
+            "startWatchTime": int(start_time),
+            "endWatchTime": int(end_time),
+            "startDate": start_date,
+            "endDate": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "studyTotalTime": int(end_time - start_time),
+            "courseId": ctx.courseId,
+            "resourceId": resource_id,
+            "clientType": "Windows",
+            "term": ctx.term,
+        }
+        rt = self.polymasQuery(url, data).data
+        if rt is None:
+            raise Exception("Failed to save study record")
+        return rt
+
+    def fuckPolymasCourse(self, course_id: str, term: int = None):
+        """
+        * `course_id`: polymas `courseId`
+        """
+        tprint = print if self.tree_view else lambda *a, **k: None
+        logger.info(f"Fucking Polymas course {course_id}")
+        ctx = self.getPolymasContext(course_id, term)
+        name = ctx.course and ctx.course.courseName or course_id
+        tprint(f"Fucking Polymas course: {name}")
+        begin_time = time.time()
+        prefix = self.prefix
+        try:
+            w_lim = os.get_terminal_size().columns - 1
+        except Exception:
+            w_lim = 80
+        try:
+            for video in ctx.videos.values():
+                tprint(f"{prefix*2}__Fucking video {video.name}"[:w_lim])
+                try:
+                    self.fuckPolymasVideo(course_id, video.resourceId)
+                except TimeLimitExceeded as e:
+                    logger.info(f"Fucking time limit exceeded: {e}")
+                    self._pushplus("fuckZHS", "刷课已完成")
+                    self._bark("fuckZHS", "刷课已完成")
+                    tprint(prefix)
+                    tprint(f"{prefix}##Fucking time limit exceeded: {e}\n")
+                    return
+                except Exception as e:
+                    logger.exception(e)
+                    self._pushplus("fuckZHS", e)
+                    self._bark("fuckZHS", e)
+                    tprint(f"{prefix*2}##Failed: {e}"[:w_lim])
+        except KeyboardInterrupt:
+            logger.info("User interrupted")
+        wipeLine()
+        tprint(prefix)
+        tprint(f"\r{prefix}__Fucked course {name}, cost {time.time()-begin_time:.2f}s\n")
+
+    def fuckPolymasVideo(self, course_id: str, resource_id: str, term: int = None):
+        """
+        * `course_id`: polymas `courseId`
+        * `resource_id`: `nodeId`/`bizId` of the resource in the study library tree
+        """
+        self._checkCookies()
+        ctx = self.getPolymasContext(course_id, term)
+        self._checkTimeLimit(f"polymas:{course_id}")
+        video = ctx.videos.get(resource_id)
+        if not video:
+            raise ValueError(f"Resource {resource_id} not found")
+
+        # refresh progress from server
+        detail = self.getPolymasResourceDetail(ctx, resource_id)
+        detail.default = None
+        duration = float(detail.duration or video.duration)
+        if duration <= 0:
+            logger.info(f"Skipping non-video resource {video.name}")
+            return
+        played_time = float(detail.endWatchTime or video.completePercentage/100*duration)
+        if detail.isFinished and self.end_thre <= 1.0:
+            logger.info(f"Video {video.name} already watched")
+            return
+        end_time = max(duration * self.end_thre, 1.0)
+        if played_time >= end_time and self.end_thre <= 1.0:
+            logger.info(f"Video {video.name} already beyond threshold")
+            return
+
+        # emulating video playing with anti-detection jitter
+        speed = self.speed or 1.5
+        interval = 30 + randint(-5, 5)  # site reports about every 30s of watch time
+        last_submit = played_time
+        segment_start = datetime.now()
+        elapsed = 0
+        watch_to = min(end_time, duration)
+        while played_time < watch_to:
+            time.sleep(1)
+            ctx.fucked_time += 1
+            elapsed += 1
+            self.active_time += 1
+            if self.active_time >= self.break_every:
+                self.active_time = 0
+                rest = randint(3, 10) * 60
+                logger.info(f"Taking a break for {rest//60} minutes")
+                print(f"\n*resting for {rest//60} minutes to avoid the captcha...\n")
+                time.sleep(rest)
+
+            speed_jitter = uniform(-0.15, 0.15)
+            played_time = min(played_time + speed + speed_jitter, watch_to)
+            if (elapsed % interval == 0 or played_time >= watch_to) \
+                    and int(played_time) > int(last_submit):
+                time.sleep(uniform(0.3, 1.2))  # small jitter before submit
+                rt = self.savePolymasStudyRecord(ctx, resource_id,
+                                                 last_submit, played_time,
+                                                 segment_start.strftime("%Y-%m-%d %H:%M:%S"))
+                last_submit = played_time
+                segment_start = datetime.now()
+                interval = 30 + randint(-5, 5)
+                if rt.completeRate is not None:
+                    video.completePercentage = float(rt.completeRate)
+            progressBar(played_time, watch_to,
+                        prefix=f"fucking {resource_id}", suffix="done",
+                        progressbar_view=self.progressbar_view)
+        time.sleep(random()+1)  # old Joe needs more sleep
+
+# end of polymas methods
+#######################################
 # shared methods
     def watchVideo(self, video_id): # it's probably unnecessary but let's keep it to fool those idiots
         headers = self.session.headers.copy()
@@ -1120,8 +1483,34 @@ class Fucker:
             raise e
 
     def _checkTimeLimit(self, cid):
-        if self.limit and self.context[cid].fucked_time >= self.limit*60:
-            raise TimeLimitExceeded(f"{self.limit} minutes")
+        if self.limit and self._daily_time + self._runTime() >= self.limit * 60:
+            raise TimeLimitExceeded(f"daily limit: {self.limit} minutes")
+
+    def _runTime(self):
+        """total seconds fucked in this run, across all courses"""
+        return sum((c.fucked_time or 0) for c in self.context.values() if isinstance(c, (dict, ObjDict)))
+
+    def _loadDailyTime(self):
+        """load seconds already fucked today, so re-runs share the same daily budget"""
+        try:
+            with open(self._daily_file, "r") as f:
+                d = json.load(f)
+            if d.get("date") == datetime.now().strftime("%Y-%m-%d"):
+                return int(d.get("seconds", 0))
+        except Exception:
+            pass
+        return 0
+
+    def _saveDailyTime(self):
+        """persist today's fucked seconds"""
+        if not self.limit:
+            return
+        try:
+            with open(self._daily_file, "w") as f:
+                json.dump({"date": datetime.now().strftime("%Y-%m-%d"),
+                           "seconds": self._daily_time + self._runTime()}, f)
+        except Exception as e:
+            logger.warning(f"failed to save daily time: {e}")
 
     def _sessionReady(self, ctx:dict=None):
         ctx = ObjDict(ctx or {}, recursive=False, default=False)
@@ -1257,17 +1646,18 @@ class Fucker:
 
         played_time = startAt
         # 开始观看
+        speed = self.speed or 1.5
         while played_time < video_length:
-            # 上传视频观看进度
+            # 上传视频观看进度 (带微小随机抖动)
             played_time = min(
-                int(round(played_time + (self.speed or 1.5) * 2)), video_length)
+                int(round(played_time + speed * 2 + uniform(-0.3, 0.3))), video_length)
             try:
                 self.reportAiVideoProcess(
                     courseId, classId, fileId, knowledgeId, played_time, watchUId=watchUId)
             except Exception as e:
                 logger.exception(e)
 
-            time.sleep(2)
+            time.sleep(2 + uniform(-0.3, 0.5))
 
             if self.progressbar_view:
                 # print progress bar
@@ -1293,7 +1683,10 @@ class Fucker:
 
             begin_time = time.time()  # real world time
             prefix = self.prefix  # prefix for tree-like print
-            w_lim = os.get_terminal_size().columns-1  # width limit for terminal output
+            try:
+                w_lim = os.get_terminal_size().columns - 1  # width limit for terminal output
+            except Exception:
+                w_lim = 79
 
             cakeThemeList = knowledgePoints.cakeThemeList
         except Exception as e:
@@ -1625,14 +2018,18 @@ class ExamCtx:
         
         self.allAnswerCache = {}
         for key, value in Allcache.items():
-            if '_' in key:
-                questionId, version = key.split('_')
+            key_str = str(key)
+            parts = key_str.rsplit('_', 1)
+            if len(parts) == 2 and parts[0] != "":
+                questionId, version = parts
                 self.allAnswerCache[f"{questionId}_{version}"] = value
+                try:
+                    value['version'] = int(version) if str(version).strip() else 1
+                except Exception:
+                    value['version'] = value.get('version', 1) or 1
             else:
-                self.allAnswerCache[key] = value
-                # 为没有版本号的答案添加默认版本
-                value['version'] = 1
-
+                self.allAnswerCache[key_str] = value
+                value['version'] = value.get('version', 1) or 1
 
         answerpath = self.getAnswerpath(examTestId)
         with open(answerpath, "r", encoding="utf-8") as f:
@@ -1641,13 +2038,18 @@ class ExamCtx:
         # 转换缓存格式以支持版本号
         self.answerCache = {}
         for key, value in cache.items():
-            if '_' in key:
-                questionId, version = key.split('_')
+            key_str = str(key)
+            parts = key_str.rsplit('_', 1)
+            if len(parts) == 2 and parts[0] != "":
+                questionId, version = parts
                 self.answerCache[f"{questionId}_{version}"] = value
+                try:
+                    value['version'] = int(version) if str(version).strip() else 1
+                except Exception:
+                    value['version'] = value.get('version', 1) or 1
             else:
-                self.answerCache[key] = value
-                # 为没有版本号的答案添加默认版本
-                value['version'] = 1
+                self.answerCache[key_str] = value
+                value['version'] = value.get('version', 1) or 1
 
         return self.answerCache, self.allAnswerCache
 
@@ -1855,42 +2257,63 @@ class ExamCtx:
         # 选项，只保留有id和content的选项
         choices = [
             {"id": option["id"], "content": option["content"]}
-            for option in questionDict["optionVos"]
+            for option in questionDict.get("optionVos", [])
             if "id" in option and "content" in option
         ]
 
-        # 选项数量少于2个，答案就是选项内容
-        if len(choices) < 2:
-            answer = choices[0]["id"]
-            return [answer], "cached"
+        # 选项数量少于2个时
+        if len(choices) == 0:
+            if questionType != 3:
+                return None, "no choices"
+        elif len(choices) < 2:
+            if questionType == 3:
+                answer = choices[0]["content"]
+            else:
+                answer = choices[0]["id"]
+            return [answer], "only one choice"
 
         try:
-            # 选项数量大于2个，使用AI生成答案
+            # 使用AI生成答案
             op = self.op
 
-            if questionType == 1:
+            if questionType == 3:
+                # 填空题
+                prompt = op.fillBlankTemplate(questionContent, referenceMaterials=self.referenceMaterials)
+                answer = op.generateFillBlankAnswer(prompt)
+                if choices:
+                    id_to_content = {c["id"]: c["content"] for c in choices}
+                    answer = [id_to_content.get(a, str(a)) for a in answer]
+            elif questionType == 1:
                 # 单选题
                 prompt = op.singleChoiceTemplate(questionContent, choices, referenceMaterials=self.referenceMaterials)
+                answer = op.generateAnswer(prompt)
             elif questionType == 2:
                 # 多选题
                 prompt = op.multipleChoiceTemplate(questionContent, choices, referenceMaterials=self.referenceMaterials)
+                answer = op.generateAnswer(prompt)
             elif questionType == 14:
                 # 判断题
                 prompt = op.judgementTemplate(questionContent, choices, referenceMaterials=self.referenceMaterials)
+                answer = op.generateAnswer(prompt)
             else:
                 raise ValueError(f"Unsupported question type: {questionType}")
-            answer = op.generateAnswer(prompt)
+
             return answer, "AI generated"
         except Exception as e:
-            # 随机生成答案
-            if questionType == 1:
+            logger.error(f"AI answer generation failed: {e}")
+            if questionType == 3:
+                answer = ["未知"]
+            elif questionType == 1:
                 answer = self.select_random_answers(choices, 1)
             elif questionType == 2:
                 answer = self.select_random_answers(choices, 2)
+            elif questionType == 14:
+                answer = self.select_random_answers(choices, 1)
+            else:
+                answer = []
 
             time.sleep(randint(3, 5))
-
-        return answer, "random"
+            return answer, "random"
 
     def select_random_answers(self, choices, n):
         # 确保 n 不大于 choices 的长度
@@ -1981,13 +2404,25 @@ class ExamCtx:
                 logger.error(
                     f"Question {questionDict['questionId']} is not correct")
 
-            # 获取题目答案
-            answer = [{"id": option["id"], "content": option["content"]}
-                      for option in questionContentDict["optionVos"]
-                      if option.get("isCorrect", 0) == 1]
-            answer_str = '#@#'.join([str(option["id"]) for option in answer])
-            answer_content_str = '\n'.join(
-                [option["content"] for option in answer])
+            # 获取题目答案（区分填空题和选择题）
+            q_type = questionContentDict.get("questionType", 1)
+            optionVos = questionContentDict.get("optionVos", [])
+            if q_type == 3:
+                # 填空客观题：优先从 optionVos 获取正确答案内容文本，若无则从 userAnswerVo 获取
+                if optionVos:
+                    answer = [option.get("content", "") for option in optionVos if option.get("isCorrect", 0) == 1]
+                    answer_str = '#@#'.join(answer)
+                    answer_content_str = '\n'.join(answer)
+                else:
+                    correct_answers = [r.get("answer", "") for r in result if r.get("isCorrect", 0) == 1]
+                    answer_str = '#@#'.join(correct_answers)
+                    answer_content_str = '\n'.join(correct_answers)
+            else:
+                answer = [{"id": option["id"], "content": option["content"]}
+                          for option in optionVos
+                          if option.get("isCorrect", 0) == 1]
+                answer_str = '#@#'.join([str(option["id"]) for option in answer])
+                answer_content_str = '\n'.join([option["content"] for option in answer])
 
             # 保存答案
             answer_dict = {
@@ -2046,54 +2481,39 @@ class Openai:
             self.encoder = SimpleEncoder()
 
         self.prefix = "8ZflKEagfL"
-
-    def __parseStream(self, response: requests.Response, aim_start: str, aim_end: str) -> str:
-        """解析 stream 响应"""
-        cache = ""
-        for line in response.iter_lines():
-            if not line:
-                continue
-
-            try:
-                json_data = json.loads(line.decode('utf-8')[5:])
-                content = json_data.get("choices", [{}])[0].get(
-                    "delta", {}).get("content", "")
-                if content:
-                    cache += content
-                    # 使用正则寻找答案
-                    match = re.search(
-                        f"{re.escape(aim_start)}(.*?){re.escape(aim_end)}", cache, re.DOTALL)
-                    if match:
-                        return cache
-            except json.JSONDecodeError:
-                continue
+        if not self.useZhidao:
+            base_url = self.baseUrl.rstrip("/")
+            if not base_url.endswith("/v1") and "zhihuishu" not in base_url:
+                base_url = f"{base_url}/v1"
+            self.client = OpenAI(
+                api_key=self.apiKey or "none",
+                base_url=base_url,
+            )
+        else:
+            self.client = None
 
     def openaiCompletion(self, prompt: str, aimStart: str = "```answer", aimEnd: str = "```", max_retries: int = 3, retry_delay: float = 1.0) -> str:
-        url = f"{self.baseUrl}/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.apiKey}",
-        }
-
-        body = {
-            "messages": [{"role": "user", "content": prompt}],
-            "model": self.modelName,
-            "stream": self.stream,
-        }
-
         for attempt in range(max_retries):
             try:
-                response = requests.post(
-                    url, headers=headers, json=body, timeout=30, stream=self.stream)
-                response.raise_for_status()
-
+                response = self.client.chat.completions.create(
+                    model=self.modelName,
+                    messages=[{"role": "user", "content": prompt}],
+                    stream=self.stream,
+                )
                 if self.stream:
-                    result = self.__parseStream(response, aimStart, aimEnd)
+                    cache = ""
+                    for chunk in response:
+                        content = chunk.choices[0].delta.content or ""
+                        if content:
+                            cache += content
+                            match = re.search(
+                                f"{re.escape(aimStart)}(.*?){re.escape(aimEnd)}", cache, re.DOTALL)
+                            if match:
+                                return cache
+                    return cache
                 else:
-                    result = response.json()
-
-                return result["choices"][0]["message"]["content"] if isinstance(result, dict) else result
-            except requests.exceptions.RequestException as e:
+                    return response.choices[0].message.content
+            except Exception as e:
                 logger.error(
                     f"Completion attempt {attempt + 1} failed: {str(e)}")
                 if attempt < max_retries - 1:
@@ -2103,7 +2523,6 @@ class Openai:
                         "All completion attempts failed, giving up...")
                     raise
 
-        # This line should never be reached, but it's here for completeness
         raise Exception("Unexpected error in completion method")
 
     def zhiDaoCompletion(self, prompt: str, aimStart: str = "```answer", aimEnd: str = "```", max_retries: int = 3, retry_delay: float = 1.0) -> str:
@@ -2220,6 +2639,61 @@ class Openai:
 
     def judgementTemplate(self, question, choices, referenceMaterials: list = []) -> str:
         return self._baseTemplate(question, choices, referenceMaterials, "判断题")
+
+    def fillBlankTemplate(self, question, referenceMaterials: list = []) -> str:
+        """填空题prompt模板"""
+        if len(referenceMaterials) == 0:
+            reserenceMaterial = ""
+        else:
+            reserenceMaterial = "参考资料：\n".join(
+                [f"```{material.get('name', '')}\n{material.get('content', '')}\n```" for material in
+                 referenceMaterials])
+
+        aiBackground = f"假设你是一名学生，正在学习《{self.extra.get('courseName', '未知课程')}》。\n"
+        theme = f"现在，你学习到了{self.extra.get('theme', '未知主题')}。\n" if "theme" in self.extra else ""
+        knowledgePoint = f"本次考察知识点为{self.extra.get('knowledgePoint', '未知知识点')}。\n" if "knowledgePoint" in self.extra else ""
+
+        answerRequirment = """本题为填空题，请根据题目内容填写空白处的答案。如果有多个空，每个空的答案用换行分隔。回答放到markdown代码块中，例如：
+
+```answer
+第一个空的答案
+第二个空的答案
+```
+
+请只填写空白处应该填入的内容，不要重复题目。答案必须简洁准确，通常是词组或短句。在这个markdown代码块（answer）外，你可以解释为什么你认为这个答案是正确的。
+"""
+        questionContent = f"现在，请听题：\n\n{question}\n\n"
+        return reserenceMaterial + aiBackground + theme + knowledgePoint + answerRequirment + questionContent
+
+    def generateFillBlankAnswer(self, prompt: str) -> list:
+        """生成填空题答案，返回纯文本列表"""
+        tokens = self.encoder.encode(prompt)
+
+        if len(tokens) > 27900:
+            tokens = tokens[-27900:]
+            prompt = self.encoder.decode(tokens)
+            logger.warning(f"Prompt is too long, truncated to {len(tokens)} tokens")
+
+        if self.useZhidao:
+            aicompletion = self.zhiDaoCompletion(prompt)
+        else:
+            aicompletion = self.openaiCompletion(prompt)
+
+        # 寻找```answer \n ... \n```块
+        answer_block = re.search(
+            r"```answer\s*\n?(.*?)\n?```", aicompletion, re.DOTALL)
+        if answer_block is None:
+            answer_block = re.search(r"```\s*\n?(.*?)\n?```", aicompletion, re.DOTALL)
+        if answer_block is None:
+            raise ValueError("Answer block not found in completion")
+
+        answer_str = answer_block.group(1).strip()
+        answers = [line.strip() for line in answer_str.split('\n') if line.strip()]
+
+        if not answers:
+            raise ValueError(f"No valid fill-blank answers found: {answer_str}")
+
+        return answers
 
     def generateAnswer(self, prompt: str) -> list:
         tokens = self.encoder.encode(prompt)

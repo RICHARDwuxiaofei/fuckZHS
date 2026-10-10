@@ -97,7 +97,7 @@ parser.add_argument("-s", "--speed", type=float,
 parser.add_argument("-t", "--threshold", type=float,
                     help="Video End Threshold, above this will be considered finished, overloaded when there are questions left unanswered")
 parser.add_argument("-l", "--limit", type=int, default=0,
-                    help="Time Limit (in minutes, 0 for no limit), default is 0")
+                    help="Daily time Limit (in minutes, 0 for no limit), shared across courses, default is 0")
 parser.add_argument("-q", "--qrlogin", action="store_true",
                     help="Use QR Login")
 parser.add_argument("-d", "--debug", action="store_true", help="Debug Mode")
@@ -306,49 +306,95 @@ if args.aicourse:
 exec_list = os.path.join(getDataDir(), "execution.json")
 # fetch course list
 if args.fetch:
-    with open(exec_list, "w") as f:
-        zhidao_ids = [{"name": c.courseName, "id": c.secret}
-                      for c in fucker.getZhidaoList()]
-        hike_ids = [{"name": c.courseName, "id": str(
-            c.courseId)} for c in fucker.getHikeList()]
-        ai_ids = [{"name": f"[AI] {c.courseName}", "id": str(c.courseId), "classId": c.classId, "type": "ai"}
-                   for c in (fucker.getZhidaoAiList() or [])]
-        json.dump(zhidao_ids + hike_ids + ai_ids, f, indent=4, ensure_ascii=False)
+    from contextlib import suppress
+    courses = []
+    with suppress(Exception):
+        courses += [{"name": c.courseName, "id": c.secret}
+                    for c in (fucker.getZhidaoList() or [])]
+    with suppress(Exception):
+        courses += [{"name": c.courseName, "id": str(c.courseId)}
+                    for c in (fucker.getHikeList() or [])]
+    with suppress(Exception):
+        courses += [{"name": f"[AI] {c.courseName}", "id": str(c.courseId), "classId": c.classId, "type": "ai"}
+                    for c in (fucker.getZhidaoAiList() or [])]
+    with suppress(Exception):
+        courses += [{"name": f"[Polymas AI] {c.courseName}", "id": f"polymas:{c.courseId}"}
+                    for c in (fucker.getPolymasList() or [])]
+    with open(exec_list, "w", encoding="utf-8") as f:
+        json.dump(courses, f, indent=4, ensure_ascii=False)
+    print(f"Course list saved to {exec_list} ({len(courses)} courses found)")
     exit(0)
 
 # get courses from file if not specified
+course_items = None
 if not course and os.path.isfile(exec_list):
-    with open(exec_list, "r") as f:
+    with open(exec_list, "r", encoding="utf-8") as f:
         try:
-            course = [str(c["id"]) for c in json.load(f)]
+            exec_data = json.load(f)
+            if isinstance(exec_data, list):
+                course_items = exec_data
         except Exception as e:
             print(f"*Failed to load course list from file: {e}")
             exit(1)
 
-# still not found?
-if not course:
-    fucker.fuckWhatever()
+# still not found? fuck whatever is found with captcha retry loop
+if not course and not course_items:
+    max_attempts = 8
+    cooldown = 10 * 60   # first wait 10 minutes, then back off up to 1 hour
+    attempts = 0
+    while True:
+        fucker.captcha_hit = False
+        fucker.context = ObjDict(default=None)  # drop stale context, avoids "study time decreased"
+        fucker.fuckWhatever()
+        attempts += 1
+        if not fucker.captcha_hit:
+            break
+        if attempts >= max_attempts:
+            print(f"*Captcha keeps coming back, giving up after {max_attempts} attempts")
+            break
+        wait = min(cooldown, 60 * 60)
+        print(f"*Captcha required, sleeping {wait//60} min then retrying (attempt {attempts}/{max_attempts})...")
+        time.sleep(wait)
+        cooldown = min(cooldown * 2, 60 * 60)
     exit(0)
 
-# auto detect mode
-for c in course.copy():
-    if args.videos:
-        for v in args.videos:
-            try:
-                fucker.fuckVideo(course_id=c, video_id=v)
-                print(f"fucked {v}")
-                args.videos.remove(v)
-            except Exception:
-                pass
-    else:
+# execute courses from execution.json
+if course_items:
+    for item in course_items.copy():
+        c_id = str(item.get("id") if isinstance(item, dict) else item)
+        c_type = item.get("type") if isinstance(item, dict) else None
+        c_class_id = item.get("classId") if isinstance(item, dict) else None
         try:
-            fucker.fuckCourse(course_id=c)
-            course.remove(c)
+            if c_type == "ai":
+                print(f"Fucking AI course: {item.get('name', c_id)} ({c_id})")
+                fucker.fuckAiCourse(int(c_id), c_class_id, aiConfig=fucker.aiConfig)
+            else:
+                fucker.fuckCourse(course_id=c_id)
+            course_items.remove(item)
         except Exception as e:
             logger.exception(e)
-            print(f"Error when fucking course {c}:\n{e}")
-if args.videos:
-    print(f"*the following videos are not fucked: {args.videos}")
+            print(f"Error when fucking course {c_id}:\n{e}")
+
+# execute courses specified via command line arguments
+elif course:
+    for c in course.copy():
+        if args.videos:
+            for v in args.videos:
+                try:
+                    fucker.fuckVideo(course_id=c, video_id=v)
+                    print(f"fucked {v}")
+                    args.videos.remove(v)
+                except Exception:
+                    pass
+        else:
+            try:
+                fucker.fuckCourse(course_id=c)
+                course.remove(c)
+            except Exception as e:
+                logger.exception(e)
+                print(f"Error when fucking course {c}:\n{e}")
+    if args.videos:
+        print(f"*the following videos are not fucked: {args.videos}")
 
 # use fuckCourse method to fuck the entire course
 # fucker.fuckCourse(course_id="")

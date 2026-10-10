@@ -15,6 +15,15 @@ def strToClass(class_name: str, module: str="__main__"):
     return getattr(sys.modules[module], class_name)
 
 def showImage(img, show_in_terminal=False, ensure_unicode=False):
+    try:
+        img_dir = os.path.join(getDir(), "images")
+        os.makedirs(img_dir, exist_ok=True)
+        filepath = os.path.join(img_dir, "qr.temp.jpg")
+        image_obj = Image.open(io.BytesIO(img))
+        image_obj.save(filepath, format="JPEG")
+    except Exception:
+        pass
+
     if show_in_terminal:
         if ensure_unicode:
             terminalShowImage_unicode(img)
@@ -24,7 +33,7 @@ def showImage(img, show_in_terminal=False, ensure_unicode=False):
         import threading
         img = Image.open(io.BytesIO(img))
         threading.Thread(target=img.show).run()
-    print("Scan QR code")
+    print("Scan QR code (如终端显示不清晰/乱码，可直接打开 images/qr.temp.jpg 扫码)")
 
 def terminalShowImage_unicode(img):
     img = Image.open(io.BytesIO(img))

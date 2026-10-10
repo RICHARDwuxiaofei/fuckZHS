@@ -2,7 +2,10 @@
 **/logs
 config.json
 cookies.json
+daily_limit.json
 execution.json
+images/
+*.bak
 *.js
 .DS_Store
 

@@ -1,7 +1,7 @@
 {
-    "version": "2.8.0",
+    "version": "2.9.0",
     "branch": "master",
     "author": "VermiIIi0n",
-    "mod": "wrq18",
-    "mod_desc": "AI课程自动检测, tiktoken容错, Profile账户切换, PyInstaller打包支持"
+    "mod": "RICHARDwuxiaofei",
+    "mod_desc": "Polymas AI智课适配, 反风控抖动与防死等重试, 填空题支持, DeepSeek接入, Profile多账户"
 }
