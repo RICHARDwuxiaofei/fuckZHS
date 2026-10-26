@@ -1,0 +1,3 @@
+-r requirements.txt
+OpenAI==3.28.0
+pyinstaller==6.22.3

@@ -1,0 +1,32 @@
+name: Build Windows ZIP (no release)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/windows-exe]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build, audit and test Windows executable
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - name: Save the Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuckZHS-Windows-x64
+          path: dist/fuckZHS-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 7
