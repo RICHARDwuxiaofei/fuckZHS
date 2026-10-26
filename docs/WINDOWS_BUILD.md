@@ -19,7 +19,9 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 
 构建使用项目独立虚拟环境，成功产物为 dist/fuckZHS-Windows-x64.zip。完整解压后可直接运行，无需在目标电脑安装 Python。
 
-已准备的构建工作流只上传下载产物，不发布 Release。尚未推送本地分支，也没有触发远端构建。
+目标仓库为用户自己的 fork `RICHARDwuxiaofei/fuckZHS`，打包分支为 `codex/windows-exe`。用户在自己的 Windows PC 本地编译。
+
+GitHub 构建工作流只保留手动触发，不因推送自动运行；即使日后手动运行，也只保存下载产物，不发布 Release。
 
 用于远端构建的独立源码快照不包含本机 Git 历史、Fedora 运行报告、账户数据或已有日志。
 

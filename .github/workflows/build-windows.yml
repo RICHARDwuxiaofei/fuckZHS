@@ -2,8 +2,6 @@ name: Build Windows ZIP (no release)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [codex/windows-exe]
 
 permissions:
   contents: read
