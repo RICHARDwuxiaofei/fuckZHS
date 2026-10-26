@@ -1,18 +1,14 @@
-fuckZHS Windows x64
+学习助手 · Windows x64
 
-Extract the complete ZIP to a writable folder. Python is not needed to run it.
-1. Run Login.cmd, scan the QR code and confirm login in the Zhidao app.
-2. Run Learn.cmd for ordinary videos at 1x speed. This launcher skips AI courses
-   and videos that require interactive quizzes. Formal exams are disabled.
-3. Close the learning window or press Ctrl+C to stop.
+完整解压到可以写入的文件夹，双击 fuckZHS.exe 即可使用，无需安装 Python。
+1. 点击“扫码登录 / 刷新课程”，使用知到 App 扫码并确认。
+2. 勾选课程，设置本次最长运行时间，点击“开始所选课程”。
+3. 运行期间保持窗口打开；点击“停止”或关闭窗口即可结束任务。
 
-Double-clicking fuckZHS.exe also performs login/course discovery only.
-For other options: fuckZHS.exe -h
+使用 1 倍速，仅处理普通视频，跳过已完成视频。AI 课程仅展示。
+正式考试、作业和付费 AI 不在此界面运行。遇到验证或无法确认的
+随堂题时任务停止，需要本人处理。
 
-No account, API key, cookies, saved configuration, QR token or Linux systemd
-service is included. Each Windows user logs in independently. Keep the whole
-extracted folder together, including _internal. New private files are created
-inside profiles/windows after login; do not redistribute that folder afterwards.
-
-This is a console application. It is not an automatically installed background
-service. A fresh Windows install has AI disabled and no paid API credentials.
+每位使用者独立扫码。登录数据保存在本机 profiles 目录，日志有大小限制。
+请保留 _internal 文件夹。不要把登录后生成的 profiles、二维码、日志
+或账号资料发给其他人。初始安装包不包含任何账号或 API Key。

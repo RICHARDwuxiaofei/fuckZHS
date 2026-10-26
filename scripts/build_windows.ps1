@@ -25,7 +25,7 @@ $Work = Join-Path $Root "build/windows-$RunId"
 & $Python -m PyInstaller --noconfirm --clean --distpath $Output --workpath $Work fuckZHS.spec
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
 $App = Join-Path $Output 'fuckZHS'
-Copy-Item (Join-Path $Root 'packaging/windows/*') $App
+Copy-Item (Join-Path $Root 'packaging/windows/README.txt') $App
 Copy-Item (Join-Path $Root 'LICENSE') $App
 
 # Audit the finished application, never copy the repository or a local profile.
@@ -36,7 +36,9 @@ $Leaks = Get-ChildItem $App -Recurse -Force | Where-Object {
     else { $ForbiddenNames -contains $_.Name -or $_.Extension -eq '.log' }
 }
 if ($Leaks) { throw 'Privacy audit failed: a forbidden private file or directory was included.' }
-& (Join-Path $App 'fuckZHS.exe') -h
+# Wait explicitly: windowed executables do not reliably set LASTEXITCODE in PowerShell.
+$Smoke = Start-Process -FilePath (Join-Path $App 'fuckZHS.exe') -ArgumentList '--gui-smoke-test' -Wait -PassThru
+$LASTEXITCODE = $Smoke.ExitCode
 if ($LASTEXITCODE -ne 0) { throw 'Packaged executable smoke test failed.' }
 $Archive = Join-Path $Root 'dist/fuckZHS-Windows-x64.zip'
 Compress-Archive -Path $App -DestinationPath $Archive -Force

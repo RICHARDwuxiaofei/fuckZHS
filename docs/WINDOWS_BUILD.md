@@ -1,30 +1,30 @@
-# Windows 构建状态
+# Windows GUI 构建
 
-- PASS — 已修复 main.py 无条件导入 Linux fcntl 的兼容性问题，改用 Windows msvcrt / Unix flock 的单实例锁。
-- PASS — 本地跨进程锁冲突与释放测试、既有安全测试共 11 项通过；Windows 入口的帮助命令通过。
-- PASS — 默认双击 EXE 仅扫码登录并获取课程。提供 Login.cmd / Learn.cmd，默认关闭 AI 和正式考试，学习启动器使用 1 倍速并跳过互动答题视频。
-- PASS — PyInstaller 仅收集程序依赖及 meta.json；构建脚本只另外复制干净的 Windows 启动器、说明与许可证，审计禁止出现 profiles、key、config、cookies、日志与二维码。
-- PASS — 源码构建包严格包含 25 个白名单文件及 SHA256 清单；本地 Key 的实际内容未出现在任何打包文件中，检查过程不输出 Key。
-- PARTIAL — 已准备 Windows x64 构建脚本和 GitHub Actions 工作流。Fedora 当前没有 Windows Python / Wine 环境，不能将本地 Linux 打包结果当作 Windows EXE。
-- NOT_TESTED — 真正的 Windows 构建、Windows 原生锁测试、生成 EXE 的启动与扫码。Windows CI 配置为执行单元测试、打包和 EXE 帮助命令检查；扫码仍需用户本人在实际 Windows 桌面验证。
-- NOT_TESTED — Windows Authenticode 签名和 SmartScreen 信誉。
+- PASS — 已增加独立 GUI：内嵌二维码、课程勾选、1 倍速视频、进度回读、停止按钮和有上限的运行记录。AI 课程仅展示，不调用付费 API，不处理正式考试和作业。
+- PASS — 分发入口于香港时间 **2026-11-06 00:00** 起静默退出，无弹窗、无到期提示，也不删除用户文件。已打开的 GUI 会停止工作进程并退出；工作进程请求前后也检查日期。自己的 `main.py` 命令行及 Fedora 服务不受此限制。
+- PARTIAL — 这是离线日期限制，不能防止用户修改系统时间、修改源码或继续传播文件，不能作为可靠的授权系统。
+- PASS — 21 项单元测试及 Fedora Qt 离屏 GUI 启动/退出测试通过，界面已渲染检查；修复 Qt 对象销毁顺序导致的退出崩溃。
+- PASS — 跨进程单实例锁、有效 Cookie 的真实接口验证逻辑、无密钥 GUI 工作进程、独立账号目录；课程完成统计需要服务端回读确认。
+- PASS — 打包严格使用源码白名单，不携带本机 Git 历史、账户、配置、Key、Cookie、二维码、日志和 Fedora 报告。源文件检查会在内存中比对本地实际 Key，不输出其内容。
+- PASS — 生成无控制台窗口的 GUI，移除旧 CMD 启动器。构建脚本执行单元测试、成品隐私审计和 GUI 启动/退出检查。
+- NOT_TESTED — 真正的 Windows 编译、原生桌面扫码、实际 Windows 视频学习和 SmartScreen/签名。Fedora 的离屏验证不能替代 Windows 实测。
 
-## 构建
+## 在自己的 Windows PC 编译
 
-在 Windows x64 上使用 Python 3.12，执行：
+使用 Python 3.12 x64，在本分支目录执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 ```
 
-构建使用项目独立虚拟环境，成功产物为 dist/fuckZHS-Windows-x64.zip。完整解压后可直接运行，无需在目标电脑安装 Python。
+成功后得到 `dist/fuckZHS-Windows-x64.zip`。完整解压后双击 `fuckZHS.exe`。
+构建使用独立虚拟环境，不复制任何本机 Profile。运行后每个人独立扫码。
+GUI 默认使用 `shared` 档案。关闭窗口会结束其工作进程，不安装后台服务。
 
-目标仓库为用户自己的 fork `RICHARDwuxiaofei/fuckZHS`，打包分支为 `codex/windows-exe`。用户在自己的 Windows PC 本地编译。
+目标仅为用户自己的 fork `RICHARDwuxiaofei/fuckZHS`，分支 `codex/windows-exe`。
+GitHub Actions 仅手动触发，推送不自动构建，不发布 Release。
+独立源码快照不含 Fedora 的 Git 历史及运行报告。
 
-GitHub 构建工作流只保留手动触发，不因推送自动运行；即使日后手动运行，也只保存下载产物，不发布 Release。
-
-用于远端构建的独立源码快照不包含本机 Git 历史、Fedora 运行报告、账户数据或已有日志。
-
-Windows 版本包含命令行程序及其依赖文件夹；Fedora 的 systemd 后台服务和巡检不会移植或打包进去。
-
-官方依据：https://pyinstaller.org/en/stable/operating-mode.html
+修改后重新执行 `scripts/prepare_windows_source.py` 生成白名单源码包和 SHA256 清单。
+PyInstaller 的 Windows EXE 必须在 Windows 构建：
+https://pyinstaller.org/en/stable/operating-mode.html
