@@ -14,7 +14,15 @@ FILES = (
     'tests/test_share_gui.py', 'tests/test_share_policy.py', 'tests/test_share_protocol.py',
     'packaging/windows/README.txt', 'tests/test_fedora_safety.py',
     'tests/test_profile_lock.py', 'docs/WINDOWS_BUILD.md',
-    '.github/workflows/build-windows.yml',
+    '.github/workflows/build-windows.yml', '.github/ISSUE_TEMPLATE/bug---.md',
+    'README.md', 'docs/WINDOWS_MIGRATION.md', 'requirements-fedora.lock',
+    'scripts/fedora_runner.py', 'systemd/fuckzhs-nagi.service',
+    'decrypt/decrypt_api.py', 'decrypt/decrypt_hike.py', 'decrypt/main.py',
+    'decrypt/hike.zip', 'decrypt/zhidao.zip',
+    'images/1000.png', 'images/Shiochan.webp', 'images/bonus.jpg',
+    'images/dragon.jpg', 'images/headers.png', 'images/just_do_it.jpg',
+    'images/level0.png', 'images/level2.png', 'images/level3.png',
+    'images/mapping.png', 'images/params.png', 'images/running.png', 'images/wtf.png',
 )
 
 
@@ -50,6 +58,7 @@ def main():
         'source_files': len(FILES),
         'explicit_allowlist_only': True,
         'profiles_config_cookies_logs_and_qr_excluded': True,
+        'static_upstream_illustrations_only': True,
         'local_key_values_absent': True,
         'windows_exe_built': False,
         'sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),

@@ -1,0 +1,24 @@
+[Unit]
+Description=fuckZHS nagi bounded video-only learning
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nagikokoro/CODE/fuckZHS
+Environment=HTTP_PROXY=http://127.0.0.1:10808
+Environment=HTTPS_PROXY=http://127.0.0.1:10808
+Environment=ALL_PROXY=http://127.0.0.1:10808
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+ExecStart=/usr/bin/systemd-inhibit --what=sleep:idle --mode=block --who=fuckZHS-nagi --why=Bounded-video-learning /home/nagikokoro/CODE/fuckZHS/.venv/bin/python -u /home/nagikokoro/CODE/fuckZHS/scripts/fedora_runner.py
+UMask=0077
+Restart=no
+RuntimeMaxSec=10h
+TimeoutStopSec=20s
+KillMode=control-group
+MemoryMax=768M
+TasksMax=32
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=default.target
