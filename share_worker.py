@@ -10,14 +10,16 @@ from share_policy import ShareExpiredError, require_access
 from share_protocol import EventSink, profile_path, validate_profile
 
 
-def run(argv):
-    require_access()
+def run(argv, *, owner_mode=False):
+    check_access = (lambda: None) if owner_mode else require_access
+    check_access()
     parser = argparse.ArgumentParser()
     parser.add_argument("--action", choices=("fetch", "learn"), required=True)
     parser.add_argument("--profile", required=True)
     parser.add_argument("--events", required=True)
     parser.add_argument("--course", action="append", default=[])
     parser.add_argument("--minutes", type=int, default=120)
+    parser.add_argument("--reauth", action="store_true")
     args = parser.parse_args(argv)
     validate_profile(args.profile)
     if not 10 <= args.minutes <= 240:
@@ -26,6 +28,7 @@ def run(argv):
     from utils import getDir, setProfile, cookie_jar_to_list
     from profile_lock import acquire_profile_lock
     from fucker import Fucker, CaptchaException, TimeLimitExceeded, CourseNotStartedException
+    from course_progress import video_summary, platform_percent
     import requests
 
     setProfile(args.profile)
@@ -37,7 +40,7 @@ def run(argv):
 
     class SharedFucker(Fucker):
         def _checkTimeLimit(self, cid):
-            require_access()
+            check_access()
             if time.monotonic() >= deadline:
                 raise TimeLimitExceeded("运行时长已到")
             return super()._checkTimeLimit(cid)
@@ -73,18 +76,19 @@ def run(argv):
                          tree_view=False, progressbar_view=False, aiConfig={"enabled": False})
         f.videos_only = True
         f.allow_learning_quizzes = True  # Only answers explicitly returned by the platform.
+        f.progress_callback = lambda **values: sink.emit("playback", **values)
         request = f.session.request
 
         def guarded_request(*a, **kw):
-            require_access()
+            check_access()
             result = request(*a, **kw)
-            require_access()
+            check_access()
             return result
         f.session.request = guarded_request
 
         authenticated = False
         cookie_path = directory / "cookies.json"
-        if cookie_path.exists():
+        if cookie_path.exists() and not args.reauth:
             try:
                 f.cookies = json.loads(cookie_path.read_text(encoding="utf-8"))
                 f.getZhidaoList()
@@ -99,7 +103,7 @@ def run(argv):
                 sink.emit("error", code="login", message="登录已失效，请先点击扫码登录。")
                 return 2
             def qr_callback(data):
-                require_access()
+                check_access()
                 qr = directory / "qr-login.png"
                 qr.write_bytes(data)
                 os.chmod(qr, 0o600)
@@ -116,7 +120,7 @@ def run(argv):
             sources = (("zhidao", f.getZhidaoList), ("hike", f.getHikeList),
                        ("ai", f.getZhidaoAiList), ("polymas", f.getPolymasList))
             for kind, fetch in sources:
-                require_access()
+                check_access()
                 try:
                     rows = fetch()
                     if not isinstance(rows, list):
@@ -124,12 +128,31 @@ def run(argv):
                     for row in rows:
                         cid = str(row.secret if kind == "zhidao" else row.courseId)
                         courses.append({"id": "polymas:" + cid if kind == "polymas" else cid,
-                                        "name": row.courseName, "type": kind})
+                                        "name": row.courseName, "type": kind,
+                                        "term": row.get('termName') or '当前在学',
+                                        "platform_percent": platform_percent(row.get('progress')),
+                                        "video_progress": {'status': 'loading'}})
                     sink.emit("status", message=f"已读取 {len(rows)} 门{dict(zhidao='共享课', hike='校内课', ai='AI 课', polymas='Polymas 课程')[kind]}。")
+                except CaptchaException:
+                    raise
+                except ShareExpiredError:
+                    raise
                 except Exception as error:
                     sink.emit("warning", message=f"部分课程暂时无法读取（{type(error).__name__}），其他课程可继续使用。")
-            save_json("execution.json", courses)
             sink.emit("courses", courses=courses)
+            for course in courses:
+                check_access()
+                sink.emit("status", message=f"正在读取《{course['name']}》学习进度…")
+                try:
+                    course['video_progress'] = video_summary(f, course)
+                except CaptchaException:
+                    raise
+                except ShareExpiredError:
+                    raise
+                except Exception:
+                    course['video_progress'] = {'status': 'error', 'message': '进度暂时读取失败'}
+                sink.emit('course_progress', id=course['id'], progress=course['video_progress'])
+            save_json("execution.json", courses)
             sink.emit("done", message="课程列表已更新，请选择要学习的课程。")
             return 0
 
@@ -139,7 +162,7 @@ def run(argv):
             raise ValueError("No selected ordinary course")
         completed = 0
         for course in selected:
-            require_access()
+            check_access()
             cid = course["id"]
             sink.emit("course", id=cid, status="读取进度…")
             jobs = []
@@ -168,7 +191,8 @@ def run(argv):
                 sink.emit("course", id=cid, status=f"{len(jobs)} 个待学视频")
                 for index, (vid, name, before) in enumerate(jobs):
                     f._checkTimeLimit(cid)
-                    sink.emit("video", name=name, index=index + 1, total=len(jobs), course=course["name"])
+                    sink.emit("course", id=cid, status=f"{index + 1}/{len(jobs)} · 学习中")
+                    sink.emit("video", name=name, index=index + 1, total=len(jobs), course=course["name"], seconds=before)
                     if course["type"] == "zhidao":
                         f.fuckZhidaoVideo(cid, vid)
                         verified = f.getZhidaoContext(cid, force=True).videos[vid].watchState == 1
@@ -188,6 +212,9 @@ def run(argv):
                         verified = bool(f.getPolymasResourceDetail(ctx, vid).get("isFinished"))
                     completed += int(verified)
                     sink.emit("video_done", name=name, verified=verified, confirmed=completed)
+                    course['video_progress'] = video_summary(f, course)
+                    save_json('execution.json', all_courses)
+                    sink.emit('course_progress', id=cid, progress=course['video_progress'])
                 sink.emit("course", id=cid, status="本次处理结束" if jobs else "暂无待学视频")
             except CourseNotStartedException:
                 sink.emit("course", id=cid, status="尚未开课")
@@ -219,11 +246,12 @@ def run(argv):
         sink.close()
 
 
-def main(argv):
+def main(argv, *, owner_mode=False):
     try:
-        require_access()
+        if not owner_mode:
+            require_access()
     except ShareExpiredError:
         return 0
     # Backend diagnostic prints never reach a user's console or expose request data.
     with open(os.devnull, "w", encoding="utf-8") as quiet, contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
-        return run(argv)
+        return run(argv, owner_mode=True) if owner_mode else run(argv)

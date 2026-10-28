@@ -5,9 +5,11 @@
 - PASS — 当前维护分支为自己 fork 的 `codex/windows-exe`，包含本项目源码、测试、GUI/EXE 构建文件、Fedora runner 的 `--live` 改动，以及原仓库静态说明资源。
 - PASS — 不上传本机 Git 历史、个人运行报告、账号 Profile、Key、Cookie、二维码、运行日志、虚拟环境或生成产物。固定的上游说明图片与临时二维码不同，源码包仅包含逐项白名单内的静态图片。
 - PASS — GitHub 构建只允许手动触发，不自动创建 Release；不会推送上游仓库。
-- NOT_TESTED — Windows 原生安装、扫码、视频学习和打包，需要在新电脑实际验证。Linux 上测试通过不能代替这些结果。
+- PASS — 2026-10-28 在 Windows 11 x64、Python 3.13.9 的独立虚拟环境完成安装、图片扫码、Cookie 恢复、真实课程接口和 GUI EXE 构建验证。
 
 ## 自己使用 CLI（不受分享版日期限制）
+
+当前开发阶段优先使用源码桌面版：双击根目录 `启动学习助手.vbs`，登录、选课和实时进度都在窗口中，参见 [源码桌面版](SOURCE_APP.md)。暂不重新编译 EXE。
 
 在 Windows PowerShell 中进入项目文件夹。推荐安装 Python 3.12 x64，然后执行：
 
@@ -31,6 +33,8 @@ py -3.12 -m venv .venv
 `Ctrl+C` 停止。该方式保持终端打开，默认显示课程树与进度条，使用 1 倍速，最长每日 540 分钟。
 不要同时开 GUI 或另一个相同账号的任务。`--videos-only` 保守跳过 AI/Polymas 和需要交互答题的视频；因此不能将命令退出当作所有课程完成。
 Windows 上不要运行 `scripts/fedora_runner.py`：它使用 Linux 的 fcntl 和 systemd，保留仅用于原 Fedora 环境。CLI 的跨平台入口是 `main.py`。
+
+本人明确允许平台已给答案的随堂题时，可追加 `--known-video-quizzes --noninteractive`。只提交平台明确标记的正确选项；缺少答案或题目详情时整个任务停止（退出码 4），不会调用 AI 或猜答案。验证码退出码为 3。此选项必须和 `--videos-only` 一起使用，正式考试和作业仍不运行。
 
 ## 分享 GUI / 编译 EXE
 

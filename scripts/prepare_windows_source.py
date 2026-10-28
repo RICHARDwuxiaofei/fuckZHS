@@ -11,6 +11,8 @@ FILES = (
     'requirements.txt', 'requirements-build-windows.txt', 'fuckZHS.spec', 'LICENSE', '.gitignore',
     'scripts/build_windows.ps1', 'scripts/prepare_windows_source.py',
     'share_gui.py', 'share_worker.py', 'share_policy.py', 'share_protocol.py',
+    'owner_entry.py', 'course_progress.py', '启动学习助手.vbs', 'docs/SOURCE_APP.md',
+    'tests/test_course_progress.py',
     'tests/test_share_gui.py', 'tests/test_share_policy.py', 'tests/test_share_protocol.py',
     'packaging/windows/README.txt', 'tests/test_fedora_safety.py',
     'tests/test_profile_lock.py', 'docs/WINDOWS_BUILD.md',

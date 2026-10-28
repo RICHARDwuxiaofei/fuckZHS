@@ -22,8 +22,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 $RunId = [Guid]::NewGuid().ToString('N')
 $Output = Join-Path $Root "dist/windows-$RunId"
 $Work = Join-Path $Root "build/windows-$RunId"
-& $Python -m PyInstaller --noconfirm --clean --distpath $Output --workpath $Work fuckZHS.spec
-if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
+# Build tools on PATH can contain unrelated ICU/API-set DLLs with the same names
+# as Windows system libraries. Do not let PyInstaller bundle those by accident.
+$TaskOriginalPath = $env:PATH
+$TaskOriginalConsole = $env:FUCKZHS_BUILD_CONSOLE
+try {
+    $BasePython = & $Python -c "import sys; print(sys.base_prefix)"
+    $env:PATH = @((Split-Path $Python), $BasePython, (Join-Path $env:SystemRoot 'System32'), $env:SystemRoot) -join ';'
+    $env:FUCKZHS_BUILD_CONSOLE = '0'
+    & $Python -m PyInstaller --noconfirm --clean --distpath $Output --workpath $Work fuckZHS.spec
+    $TaskBuildExit = $LASTEXITCODE
+} finally {
+    $env:PATH = $TaskOriginalPath
+    $env:FUCKZHS_BUILD_CONSOLE = $TaskOriginalConsole
+}
+if ($TaskBuildExit -ne 0) { throw 'PyInstaller build failed.' }
 $App = Join-Path $Output 'fuckZHS'
 Copy-Item (Join-Path $Root 'packaging/windows/README.txt') $App
 Copy-Item (Join-Path $Root 'LICENSE') $App
@@ -37,7 +50,11 @@ $Leaks = Get-ChildItem $App -Recurse -Force | Where-Object {
 }
 if ($Leaks) { throw 'Privacy audit failed: a forbidden private file or directory was included.' }
 # Wait explicitly: windowed executables do not reliably set LASTEXITCODE in PowerShell.
-$Smoke = Start-Process -FilePath (Join-Path $App 'fuckZHS.exe') -ArgumentList '--gui-smoke-test' -Wait -PassThru
+$Smoke = Start-Process -FilePath (Join-Path $App 'fuckZHS.exe') -ArgumentList '--gui-smoke-test' -WindowStyle Hidden -PassThru
+if (-not $Smoke.WaitForExit(30000)) {
+    Stop-Process -Id $Smoke.Id -ErrorAction SilentlyContinue
+    throw 'Packaged executable smoke test did not finish within 30 seconds.'
+}
 $LASTEXITCODE = $Smoke.ExitCode
 if ($LASTEXITCODE -ne 0) { throw 'Packaged executable smoke test failed.' }
 $Archive = Join-Path $Root 'dist/fuckZHS-Windows-x64.zip'

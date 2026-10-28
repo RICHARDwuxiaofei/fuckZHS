@@ -62,6 +62,10 @@ except ImportError:
 class TimeLimitExceeded(TimeoutError):
     pass
 
+class LearningQuizRequired(ValueError):
+    """Popup quiz cannot be safely answered from platform-provided data."""
+
+
 class CaptchaException(Exception):
     pass
 
@@ -122,6 +126,7 @@ class Fucker:
         atexit.register(self._saveDailyTime)
         self.playback_deadline = None
         self.allow_learning_quizzes = False
+        self.progress_callback = None
         self.learning_quiz_answerer = None
         self.videos_only = False
         self.captcha_hit = False                   # set True when the server demands a captcha
@@ -464,17 +469,32 @@ class Fucker:
         course_id = chapters.courseId
         lesson_ids = []
         videos = ObjDict()
+        skipped = 0
+        def playable(video):
+            try:
+                return int(video.get('videoId') or 0) > 0 and float(video.get('videoSec') or 0) > 0
+            except (TypeError, ValueError):
+                return False
         for chapter in chapters.videoChapterDtos:
             for l in chapter.videoLessons:
                 lesson_ids.append(l.id)
-                if "videoId" in l: # this lesson has only one video
+                if playable(l): # this lesson has only one playable video
                     v = l.copy()
                     v.lessonId = l.id
                     v.id = 0
                     l.videoSmallLessons = [v]
-                for v in l.videoSmallLessons: 
+                candidates = l.videoSmallLessons or []
+                l.videoSmallLessons = [v for v in candidates if playable(v)]
+                skipped += len(candidates) - len(l.videoSmallLessons)
+                if not candidates and 'videoId' in l and not playable(l):
+                    skipped += 1
+                for v in l.videoSmallLessons:
                     v.chapterId = chapter.id
                     videos[v.videoId] = v
+        if skipped:
+            logger.warning(f"Skipped {skipped} entries without a playable video ID and duration")
+            if self.tree_view:
+                print(f"Skipped {skipped} entries without a playable video ID and duration")
         logger.info(f"{len(lesson_ids)} lessons, {len(videos)} videos")
 
         # get read-before, maybe unneccessary. BUTT hey, it's a POST request
@@ -548,7 +568,7 @@ class Fucker:
                             logger.info(f"Captcha required: {e}")
                             self._pushplus("fuckZHS","需要提供验证码")
                             self._bark("fuckZHS","需要提供验证码")
-                            tprint(f"{prefix*3}##Captcha: 需要滑块验证，请在知到APP/网页手动验证后等待重试...")
+                            tprint(f"{prefix*3}##Captcha: 需要滑块验证，请在知到APP/网页手动验证。")
                             if self.videos_only:
                                 return
                             # retry with backoff
@@ -566,6 +586,8 @@ class Fucker:
                             else:
                                 tprint(f"{prefix}##Captcha重试失败，请手动在知到APP/网页完成滑块验证\a\n")
                                 return
+                        except LearningQuizRequired:
+                            raise
                         except Exception as e:
                             logger.exception(e)
                             self._pushplus("fuckZHS",e)
@@ -573,6 +595,7 @@ class Fucker:
                             tprint(f"{prefix*3}##Failed: {e}"[:w_lim])
         except KeyboardInterrupt:
             logger.info("User interrupted")
+            raise
         wipeLine()
         tprint(prefix)
         tprint(f"\r{prefix}__Fucked course {course.courseInfo.name}, cost {time.time()-begin_time:.2f}s\n")
@@ -645,7 +668,7 @@ class Fucker:
                 print(f"\n*resting for {rest//60} minutes to avoid the captcha...\n")
                 time.sleep(rest)
             # add small random speed variation to appear more human
-            speed_jitter = uniform(-0.15, 0.15)
+            speed_jitter = 0 if self.videos_only else uniform(-0.15, 0.15)
             played_time = min(played_time+speed+speed_jitter, end_time) # update video time and make sure not exceeding end_time
             pause = pause or int(random() < 0.008)*60 # randomly pause a minute, may avoid detection
             report = report or pause == 60  # report on pause
@@ -662,13 +685,20 @@ class Fucker:
             if questions and played_time >= questions[-1].timeSec:
                 question = questions.pop()
                 try:
-                    question = self.lessonPopoupExam(RAC_id,
+                    popup = self.lessonPopoupExam(RAC_id,
                                                     video_id,
                                                     question.questionIds
-                                ).lessonTestQuestionUseInterfaceDtos[0].testQuestion
+                                ).lessonTestQuestionUseInterfaceDtos
+                    if self.videos_only and len(popup) != 1:
+                        raise LearningQuizRequired("Multiple or missing popup questions require manual action")
+                    question = popup[0].testQuestion
                     answer = 2    # answer delay time
                     report = True # set report flag
+                except CaptchaException:
+                    raise
                 except Exception as e:
+                    if self.videos_only:
+                        raise LearningQuizRequired("Cannot retrieve the popup question; manual action required") from e
                     logger.error(f"can't get question detail:\n{e}")
             ## answer questions
             if answer is not None:
@@ -701,19 +731,26 @@ class Fucker:
             # have a glance of when quiz is answered
             action = "pause a minute" if pause else \
                     f"fucking {video.videoId}" if answer is None else "answering quiz"
+            self._video_progress(video.name, played_time, end_time,
+                                 "quiz" if answer is not None else "paused" if pause else "playing")
             progressBar(s, e, prefix=action, suffix="done", progressbar_view=self.progressbar_view)
         ##### end main event loop
         time.sleep(random()+1) # old Joe needs more sleep
 
+    def _video_progress(self, name, seconds, duration, state="playing"):
+        """Report local playback independently of acknowledged server writes."""
+        if callable(self.progress_callback):
+            self.progress_callback(name=name, seconds=float(seconds), duration=float(duration), state=state)
+
     def answerZhidao(self, q: dict):
         """Answer video popup quizzes only; never guess missing answers."""
         q = ObjDict(q)
-        options = q.questionOptions
+        options = q.questionOptions or []
         marked = [str(opt.id) for opt in options if str(opt.get("result")) == "1"]
         if marked:
             return ','.join(marked)
-        if not self.allow_learning_quizzes or not callable(self.learning_quiz_answerer):
-            raise ValueError("Interactive quiz has no explicit answer; manual action required")
+        if self.videos_only or not self.allow_learning_quizzes or not callable(self.learning_quiz_answerer):
+            raise LearningQuizRequired("Interactive quiz has no explicit answer; manual action required")
         answers = self.learning_quiz_answerer(q)
         valid = {str(opt.id) for opt in options}
         if not answers or not set(map(str, answers)).issubset(valid):
@@ -1025,6 +1062,7 @@ class Fucker:
                 self._traverse(course_id, chapter)
         except KeyboardInterrupt:
             logger.info("user interrupted")
+            raise
         logger.info(f"Fucked course {course_id}, cost {time.time()-begin_time}s")
         wipeLine()
         tprint(prefix)
@@ -1064,7 +1102,7 @@ class Fucker:
                 print(f"\n*resting for {rest//60} minutes to avoid the captcha...\n")
                 time.sleep(rest)
             # add small random speed variation
-            speed_jitter = uniform(-0.12, 0.12)
+            speed_jitter = 0 if self.videos_only else uniform(-0.12, 0.12)
             played_time = min(played_time+speed+speed_jitter, end_time)
             # enter branch when video is finished or interval is reached
             if played_time >= end_time or \
@@ -1077,6 +1115,7 @@ class Fucker:
                     raise RuntimeError("Study record did not advance after 3 reports")
                 prev_time, played_time = ret_time, ret_time
                 interval = 30 + randint(-5, 5) # re-randomize interval
+            self._video_progress(str(file_id), played_time, end_time)
             progressBar(played_time, end_time, prefix=f"fucking {file_id}", suffix="done", progressbar_view=self.progressbar_view)
         logger.info(f"Fucked video {file_id} of course {course_id}, cost {time.time()-begin_time:.2f}s")
         time.sleep(random()+1) # more human-like
@@ -1121,6 +1160,8 @@ class Fucker:
                     case _:
                         if not self.videos_only:
                             self.fuckFile(course_id, file.id)
+            except CaptchaException:
+                raise
             except TimeLimitExceeded as e:
                 logger.info(f"Time limit exceeded, video {file.id} skipped")
                 tprint(f"{prefix}##Time limit exceeded: {e}")
@@ -1141,6 +1182,10 @@ class Fucker:
         ret = self._apiQuery(url, data, method=method)
         if ok_code is not None and int(ret.status) != ok_code:
             ret.default = None
+            if str(ret.status) == '-12' or any(marker in str(ret.message or '').lower()
+                                              for marker in ('captcha', '滑块', '验证码')):
+                self.captcha_hit = True
+                raise CaptchaException('Captcha required; manual verification needed')
             e = Exception(f"{ret.status} {ret.message or json.dumps(ret,indent=4,ensure_ascii=False)}")
             logger.error(e)
             raise e
@@ -1480,7 +1525,7 @@ class Fucker:
                 print(f"\n*resting for {rest//60} minutes to avoid the captcha...\n")
                 time.sleep(rest)
 
-            speed_jitter = uniform(-0.15, 0.15)
+            speed_jitter = 0 if self.videos_only else uniform(-0.15, 0.15)
             played_time = min(played_time + speed + speed_jitter, watch_to)
             if (elapsed % interval == 0 or played_time >= watch_to) \
                     and int(played_time) > int(last_submit):
@@ -1493,6 +1538,7 @@ class Fucker:
                 interval = 30 + randint(-5, 5)
                 if rt.completeRate is not None:
                     video.completePercentage = float(rt.completeRate)
+            self._video_progress(video.name, played_time, watch_to)
             progressBar(played_time, watch_to,
                         prefix=f"fucking {resource_id}", suffix="done",
                         progressbar_view=self.progressbar_view)

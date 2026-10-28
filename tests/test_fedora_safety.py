@@ -85,6 +85,14 @@ class FedoraSafetyTests(unittest.TestCase):
         f.learning_quiz_answerer = lambda q: ['1']
         self.assertEqual(f.answerZhidao(q),'1')
 
+    def test_video_quiz_opt_in_never_calls_an_answer_provider(self):
+        from fucker import Fucker, LearningQuizRequired
+        f = Fucker()
+        f.videos_only = f.allow_learning_quizzes = True
+        f.learning_quiz_answerer = lambda q: self.fail('No external answer provider allowed')
+        with self.assertRaises(LearningQuizRequired):
+            f.answerZhidao({'questionOptions':[{'id':1,'result':'0'}]})
+
     def test_captcha_retains_endpoint_and_code(self):
         from fucker import Fucker, CaptchaException
         from ObjDict import ObjDict
@@ -95,6 +103,76 @@ class FedoraSafetyTests(unittest.TestCase):
                 f.zhidaoQuery(endpoint, {})
             self.assertEqual(error.exception.api_code, -12)
             self.assertEqual(error.exception.endpoint, '/gateway/t/v1/learning/saveDatabaseIntervalTimeV2')
+
+    def test_video_course_stops_on_captcha_and_propagates_ctrl_c(self):
+        from fucker import Fucker, CaptchaException
+        from ObjDict import ObjDict
+        f = Fucker(tree_view=False)
+        f.videos_only = True
+        ctx = ObjDict({'course': {'courseInfo': {'name': 'test'}}, 'chapters': {
+            'videoChapterDtos': [{'name': 'chapter', 'videoLessons': [
+                {'name': 'lesson', 'videoSmallLessons': [
+                    {'name': 'one', 'videoId': '1'}, {'name': 'two', 'videoId': '2'}]}]}]}})
+        with patch.object(f, 'getZhidaoContext', return_value=ctx):
+            with patch.object(f, 'fuckZhidaoVideo', side_effect=CaptchaException('verification')) as video:
+                f.fuckZhidaoCourse('test')
+                self.assertTrue(f.captcha_hit)
+                self.assertEqual(video.call_count, 1)
+            with patch.object(f, 'fuckZhidaoVideo', side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    f.fuckZhidaoCourse('test')
+
+    def test_cli_captcha_stops_before_next_course(self):
+        import runpy
+        from unittest.mock import Mock
+        from fucker import CaptchaException, LearningQuizRequired
+        for raises in (False, True, 'quiz'):
+            with self.subTest(raises=raises), tempfile.TemporaryDirectory() as d:
+                (Path(d) / 'meta.json').write_bytes((ROOT / 'meta.json').read_bytes())
+                directory = Path(d) / 'profiles' / 'test'
+                directory.mkdir(parents=True)
+                (directory / 'cookies.json').write_text('[]')
+                (directory / 'execution.json').write_text(json.dumps([
+                    {'id': 'one', 'type': 'zhidao'}, {'id': 'two', 'type': 'zhidao'}]))
+                backend = Mock(captcha_hit=False)
+                def captcha(**kwargs):
+                    if raises == 'quiz':
+                        raise LearningQuizRequired('manual quiz')
+                    if raises:
+                        raise CaptchaException('verification')
+                    backend.captcha_hit = True
+                backend.fuckCourse.side_effect = captcha
+                with patch('utils.getDir', return_value=d), patch('utils._profile', None), \
+                     patch('profile_lock.acquire_profile_lock'), \
+                     patch('fucker.Fucker', return_value=backend), \
+                     patch('requests.get', side_effect=RuntimeError('offline test')), \
+                     patch.object(sys, 'argv', [str(ROOT/'main.py'), '-P', 'test', '--videos-only', '--noninteractive']):
+                    with self.assertRaises(SystemExit) as stopped:
+                        runpy.run_path(str(ROOT/'main.py'), run_name='__main__')
+                    self.assertEqual(stopped.exception.code, 4 if raises == 'quiz' else 3)
+                    backend.fuckCourse.assert_called_once_with(course_id='one')
+
+    def test_unplayable_children_are_excluded_from_course_and_state_query(self):
+        from fucker import Fucker
+        from ObjDict import ObjDict
+        from contextlib import ExitStack
+        f = Fucker(tree_view=False)
+        chapters = ObjDict({'courseId':1,'videoChapterDtos':[{'id':1,'videoLessons':[
+            {'id':10,'videoSmallLessons':[
+                {'id':100,'videoId':-1,'videoSec':0,'lessonId':10},
+                {'id':101,'videoId':-1,'videoSec':0,'lessonId':10},
+                {'id':102,'videoId':20,'videoSec':60,'lessonId':10}]}]}]})
+        with ExitStack() as stack:
+            for name in ('_checkCookies','_sessionReady','gologin','queryUserRecruitIdLastVideoId'):
+                stack.enter_context(patch.object(f,name))
+            stack.enter_context(patch.object(f,'queryCourse',return_value=ObjDict({'recruitId':1})))
+            stack.enter_context(patch.object(f,'videoList',return_value=chapters))
+            states = stack.enter_context(patch.object(f,'queryStudyInfo',return_value=ObjDict({
+                'lv':{'102':{'watchState':0,'studyTotalTime':0}},'lesson':{}})))
+            ctx=f.getZhidaoContext('course')
+        self.assertEqual(list(ctx.videos),[20])
+        self.assertEqual(len(chapters.videoChapterDtos[0].videoLessons[0].videoSmallLessons),1)
+        states.assert_called_once_with([10],[102],1)
 
     def test_debug_payload_is_never_written_and_logs_are_bounded(self):
         from logger import MonoLogger

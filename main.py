@@ -9,7 +9,7 @@ import requests
 import platform
 from functools import partial
 from contextlib import suppress
-from fucker import Fucker, CourseNotStartedException
+from fucker import Fucker, CourseNotStartedException, CaptchaException, LearningQuizRequired
 from logger import logger
 from ObjDict import ObjDict
 from utils import showImage, cookie_jar_to_list
@@ -127,7 +127,10 @@ parser.add_argument("-P", "--profile", type=str, default=None,
 
 parser.add_argument("--noninteractive", action="store_true", help="Fail instead of requesting authentication")
 parser.add_argument("--videos-only", action="store_true", help="Only ordinary videos; skip AI courses and quizzes")
+parser.add_argument("--known-video-quizzes", action="store_true", help="With --videos-only, answer popup quizzes only when the platform marks the answer; otherwise stop")
 args = parser.parse_args()
+if args.known_video_quizzes and not args.videos_only:
+    parser.error("--known-video-quizzes requires --videos-only")
 
 # Setup profile before anything else
 if args.profile:
@@ -216,6 +219,7 @@ fucker = Fucker(proxies=proxies, speed=args.speed, end_thre=args.threshold, limi
 
 cookies_path = os.path.join(getDataDir(), "cookies.json")
 fucker.videos_only = args.videos_only
+fucker.allow_learning_quizzes = args.known_video_quizzes
 cookies_loaded = False
 if save_cookies and os.path.exists(cookies_path):
     try:
@@ -392,7 +396,13 @@ if course_items:
                 fucker.fuckAiCourse(int(c_id), c_class_id, aiConfig=fucker.aiConfig, no_exam=True)
             else:
                 fucker.fuckCourse(course_id=c_id)
+            if fucker.captcha_hit:
+                parser.exit(3, "Captcha required; stopped. Complete verification yourself before restarting.\n")
             course_items.remove(item)
+        except LearningQuizRequired as e:
+            parser.exit(4, f"Stopped for manual quiz action: {e}\n")
+        except CaptchaException:
+            parser.exit(3, "Captcha required; stopped. Complete verification yourself before restarting.\n")
         except CourseNotStartedException as e:
             print(f"提示: 课程 {c_id} 尚未到开课时间，已跳过 ({e})")
         except Exception as e:
@@ -416,7 +426,13 @@ elif course:
         else:
             try:
                 fucker.fuckCourse(course_id=c)
+                if fucker.captcha_hit:
+                    parser.exit(3, "Captcha required; stopped. Complete verification yourself before restarting.\n")
                 course.remove(c)
+            except LearningQuizRequired as e:
+                parser.exit(4, f"Stopped for manual quiz action: {e}\n")
+            except CaptchaException:
+                parser.exit(3, "Captcha required; stopped. Complete verification yourself before restarting.\n")
             except CourseNotStartedException as e:
                 print(f"提示: 课程 {c} 尚未到开课时间，已跳过 ({e})")
             except Exception as e:

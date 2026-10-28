@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
+import os
 
 # Collect all data and submodules for openai and its core dependencies
 openai_deps = collect_all('openai')
@@ -75,7 +76,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=os.environ.get('FUCKZHS_BUILD_CONSOLE') == '1',
     disable_windowed_traceback=True,
     argv_emulation=False,
     target_arch=None,
