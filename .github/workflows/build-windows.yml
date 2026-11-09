@@ -1,15 +1,23 @@
-name: Build Windows ZIP (no release)
+name: Build Windows expiring pre-release
 
 on:
+  push:
+    branches:
+      - release/expire-2026-11-20
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: fuckzhs-expiring-windows-preview
+  cancel-in-progress: false
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/release/expire-2026-11-20'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -18,13 +26,32 @@ jobs:
         with:
           python-version: '3.12'
           architecture: x64
-      - name: Build, audit and test Windows executable
+      - name: Build, audit, and test Windows executable
         shell: pwsh
         run: ./scripts/build_windows.ps1
-      - name: Save the Windows package
+      - name: Save Windows package as CI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fuckZHS-Windows-x64
+          name: fuckZHS-Windows-x64-20261120
           path: dist/fuckZHS-Windows-x64.zip
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
+      - name: Publish the Windows pre-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: preview-2026-11-20-windows
+          name: fuckZHS Windows Preview (expires 2026-11-20)
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          make_latest: false
+          draft: false
+          fail_on_unmatched_files: true
+          files: dist/fuckZHS-Windows-x64.zip
+          body: |
+            Windows x64 shared GUI preview, built from release/expire-2026-11-20.
+            Expires at 2026-11-21 00:00:00 (UTC+08:00), i.e. after November 20.
+            The GUI verifies online UTC time using HTTPS response headers. If no
+            time server is reachable, access is refused; local date is not used.
+            This does not delete files or affect the owner's source entry points.
+            Extract the whole ZIP before starting fuckZHS.exe. The executable
+            contains no user cookies, profiles, API keys or saved credentials.
