@@ -1,8 +1,8 @@
 # Windows GUI 构建
 
 - PASS — 已增加独立 GUI：内嵌二维码、课程勾选、1 倍速视频、进度回读、停止按钮和有上限的运行记录。AI 课程仅展示，不调用付费 API，不处理正式考试和作业。
-- PASS — 分发入口于香港时间 **2026-11-06 00:00** 起静默退出，无弹窗、无到期提示，也不删除用户文件。已打开的 GUI 会停止工作进程并退出；工作进程请求前后也检查日期。自己的 `main.py` 命令行及 Fedora 服务不受此限制。
-- PARTIAL — 这是离线日期限制，不能防止用户修改系统时间、修改源码或继续传播文件，不能作为可靠的授权系统。
+- PASS — 分发入口于北京时间（UTC+8）**2026-11-21 00:00** 起静默退出，无弹窗、无到期提示，也不删除用户文件。已打开的 GUI 会停止工作进程并退出；工作进程请求前后也检查日期。自己的 `main.py` 命令行及 Fedora 服务不受此限制。
+- PASS (code/test) — 使用多个 HTTPS 站点的响应 Date 头获取 UTC 时间（百度、腾讯、Cloudflare 依次尝试）；约每 30 秒复核一次，间隔只使用单调时钟估算，不信任电脑本地日期。断网或时钟获取失败立即拒绝继续执行，不使用离线放行。注意：由于程序在用户电脑运行，源码修改及逆向仍可能绕过，不是强 DRM。
 - PASS — 25 项单元测试在 Windows 独立构建环境通过，包含验证码、未知随堂题停止和日期边界检查。
 - PASS — 跨进程单实例锁、有效 Cookie 的真实接口验证逻辑、无密钥 GUI 工作进程、独立账号目录；课程完成统计需要服务端回读确认。
 - PASS — 打包严格使用源码白名单，不携带本机 Git 历史、账户、配置、Key、Cookie、二维码、日志和 Fedora 报告。源文件检查会在内存中比对本地实际 Key，不输出其内容。
@@ -23,8 +23,8 @@ powershell -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 构建时临时收窄 PATH，避免其他工具目录的 ICU DLL 混入；GUI 启动自检上限 30 秒。
 GUI 默认使用 `shared` 档案。关闭窗口会结束其工作进程，不安装后台服务。
 
-目标仅为用户自己的 fork `RICHARDwuxiaofei/fuckZHS`，分支 `codex/windows-exe`。
-GitHub Actions 仅手动触发，推送不自动构建，不发布 Release。
+目标仅为用户自己的 fork `RICHARDwuxiaofei/fuckZHS`，分支 `release/expire-2026-11-20`。
+限时分支推送触发 GitHub Actions，在 Windows 运行测试、构建与隐私审计，通过后上传 Windows ZIP 到带 `prerelease=true` 的 GitHub Pre-release，且不修改 master。
 独立源码快照不含 Fedora 的 Git 历史及运行报告。
 
 修改后重新执行 `scripts/prepare_windows_source.py` 生成白名单源码包和 SHA256 清单。
