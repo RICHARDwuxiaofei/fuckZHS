@@ -4,10 +4,10 @@
 > [Windows 迁移与 CLI 实时进度](docs/WINDOWS_MIGRATION.md) · [GUI / EXE 构建](docs/WINDOWS_BUILD.md)。
 >
 > 当前分支已包含 GUI、跨平台账号锁、日志脱敏/轮转和 Fedora 前台实时进度选项。
-> 分享用 GUI 于香港时间 2026-11-06 00:00 静默停用；自己的 `main.py` CLI 不受影响。
+> 分享用 GUI 于北京时间（UTC+8）2026-11-21 00:00 起静默停用（11 月 20 日全天可用）；HTTPS 联网验时，不依赖本机日期。断网或验时失败时无法启动；自己的 `main.py` CLI 不受影响。
 > 每台电脑重新扫码，不携带旧账号、Cookie 或 API Key。学习进度以平台服务器为准。
 > 下方为早期项目说明；涉及默认行为、日志和自动发布的旧描述，以当前迁移文档和代码为准。
-> 当前工作流仅手动构建，不随推送发布 Release。
+> 本分支 `release/expire-2026-11-20` 构建 Windows 分享版，并自动发布 GitHub Pre-release；不修改 `master` 或上游仓库。
 
 # fuckZHS v2.9.0
 
