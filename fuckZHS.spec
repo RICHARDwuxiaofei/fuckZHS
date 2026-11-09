@@ -5,7 +5,7 @@ import os
 
 # Collect all data and submodules for openai and its core dependencies
 openai_deps = collect_all('openai')
-httpx_deps = collect_all('httpx2')
+httpx_deps = collect_all('httpx')
 pydantic_deps = collect_all('pydantic')
 anyio_deps = collect_all('anyio')
 
@@ -36,8 +36,8 @@ a = Analysis(
         'openai.resources.models',
         'openai.resources.chat',
         'openai.resources.completions',
-        'httpx2',
-        'httpcore2',
+        'httpx',
+        'httpcore',
         'tiktoken_ext.openai_public',
         'anyio',
         'anyio._backends',
